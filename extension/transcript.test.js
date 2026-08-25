@@ -116,27 +116,51 @@ describe('scrapeTranscript', () => {
           { startSec: 0.5, text: 'Hello' },
           { startSec: 2.0, text: 'World' },
         ],
+        language: 'English',
       }),
     });
     vi.stubGlobal('fetch', mockFetch);
 
-    const cues = await scrapeTranscript('abc123');
+    const result = await scrapeTranscript('abc123');
 
-    expect(cues).toEqual([
-      { startSec: 0.5, text: 'Hello' },
-      { startSec: 2.0, text: 'World' },
-    ]);
+    expect(result).toEqual({
+      cues: [
+        { startSec: 0.5, text: 'Hello' },
+        { startSec: 2.0, text: 'World' },
+      ],
+      language: 'English',
+    });
     expect(mockFetch).toHaveBeenCalledWith('http://localhost:8765/transcript?video_id=abc123');
   });
 
-  it('returns an empty array when the sidecar responds with a non-ok status', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
-    expect(await scrapeTranscript('abc123')).toEqual([]);
+  it('passes through the track language for a non-English video', async () => {
+    // A Hindi-only video used to surface as "No transcript available"; the
+    // language now rides along so the notes can still be written in English.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          cues: [{ startSec: 0.1, text: 'नमस्ते' }],
+          language: 'Hindi (auto-generated)',
+        }),
+      }),
+    );
+
+    const result = await scrapeTranscript('xyz');
+
+    expect(result.language).toBe('Hindi (auto-generated)');
+    expect(result.cues).toHaveLength(1);
   });
 
-  it('returns an empty array when the response has no cues field', async () => {
+  it('returns no cues when the sidecar responds with a non-ok status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+    expect(await scrapeTranscript('abc123')).toEqual({ cues: [], language: 'English' });
+  });
+
+  it('returns no cues when the response has no cues field', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
-    expect(await scrapeTranscript('abc123')).toEqual([]);
+    expect(await scrapeTranscript('abc123')).toEqual({ cues: [], language: 'English' });
   });
 
   it('URL-encodes the video id', async () => {

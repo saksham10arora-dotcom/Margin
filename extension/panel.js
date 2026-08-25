@@ -304,6 +304,7 @@ async function sendChunk(chunk) {
         start_ts: toTimestamp(chunk.startSec),
         end_ts: toTimestamp(chunk.endSec),
         is_first_chunk: state.isFirstChunk,
+        transcript_language: state.transcriptLanguage || 'English',
       }),
     });
     state.isFirstChunk = false;
@@ -340,7 +341,9 @@ function pollForNewBatches() {
 export async function startAiNotes() {
   const { scrapeTranscript } = await import('./transcript.js');
   state.videoMeta = getVideoMeta();
-  state.allCues = await scrapeTranscript(state.videoMeta.video_id);
+  const transcript = await scrapeTranscript(state.videoMeta.video_id);
+  state.allCues = transcript.cues;
+  state.transcriptLanguage = transcript.language;
   state.lastBatchedSec = 0;
   state.isFirstChunk = true;
   state.active = true;

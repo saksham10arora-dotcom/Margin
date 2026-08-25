@@ -15,18 +15,26 @@ def test_health_returns_ok():
 
 
 @patch("sidecar.main.fetch_transcript")
-def test_transcript_returns_cues(mock_fetch):
-    mock_fetch.return_value = [
-        {"startSec": 0.5, "text": "Hello"},
-        {"startSec": 2.0, "text": "World"},
-    ]
+def test_transcript_returns_cues_and_the_track_language(mock_fetch):
+    # The language rides along so the note prompt can ask for English notes
+    # off a transcript that is not in English.
+    mock_fetch.return_value = {
+        "cues": [
+            {"startSec": 0.5, "text": "Hello"},
+            {"startSec": 2.0, "text": "World"},
+        ],
+        "language_code": "en",
+        "language": "English",
+    }
     response = client.get("/transcript", params={"video_id": "abc123"})
     assert response.status_code == 200
     assert response.json() == {
         "cues": [
             {"startSec": 0.5, "text": "Hello"},
             {"startSec": 2.0, "text": "World"},
-        ]
+        ],
+        "language_code": "en",
+        "language": "English",
     }
     mock_fetch.assert_called_once_with("abc123")
 
@@ -613,3 +621,20 @@ def test_note_chunk_writes_plain_prose_when_autolink_is_disabled(mock_haiku, tmp
     app.dependency_overrides.clear()
 
     assert "[[" not in response.json()["rendered_section"]
+
+
+# --- non-English transcripts ---------------------------------------------
+
+def test_language_directive_is_absent_for_english():
+    from sidecar.main import _with_language_directive
+
+    assert _with_language_directive("some words", "English") == "some words"
+
+
+def test_language_directive_asks_for_english_notes_on_a_hindi_transcript():
+    from sidecar.main import _with_language_directive
+
+    out = _with_language_directive("नमस्ते", "Hindi (auto-generated)")
+    assert out.endswith("नमस्ते")
+    assert "Hindi (auto-generated)" in out
+    assert "Write the notes themselves in English" in out

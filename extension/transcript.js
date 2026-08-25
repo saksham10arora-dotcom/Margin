@@ -75,9 +75,11 @@ const SIDECAR_URL = 'http://localhost:8765';
  */
 export async function scrapeTranscript(videoId) {
   const response = await fetch(`${SIDECAR_URL}/transcript?video_id=${encodeURIComponent(videoId)}`);
-  if (!response.ok) return [];
+  if (!response.ok) return { cues: [], language: 'English' };
   const data = await response.json();
-  return data.cues || [];
+  // A video may only have captions in one non-English language. The sidecar
+  // returns whichever track it found, and the note prompt needs to know which.
+  return { cues: data.cues || [], language: data.language || 'English' };
 }
 
 /**

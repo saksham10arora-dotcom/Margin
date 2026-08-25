@@ -66,6 +66,8 @@ class NoteChunkRequest(BaseModel):
     start_ts: str
     end_ts: str
     is_first_chunk: bool
+    # Defaulted so an older extension build keeps working unchanged.
+    transcript_language: str = "English"
 
 
 class FinalizeNoteRequest(BaseModel):
@@ -80,11 +82,11 @@ def health():
 @app.get("/transcript")
 def transcript(video_id: str):
     try:
-        cues = fetch_transcript(video_id)
+        result = fetch_transcript(video_id)
     except Exception as e:
         logger.exception("Transcript fetch failed for video_id=%s", video_id)
         raise HTTPException(status_code=404, detail=f"No transcript available: {e}")
-    return {"cues": cues}
+    return result
 
 
 @app.get("/documents")
@@ -124,13 +126,31 @@ def _generate_section(req: "NoteChunkRequest", style_anchors: list[str]) -> str:
             )
 
     return generate_section(
-        transcript_chunk=req.transcript_chunk,
+        transcript_chunk=_with_language_directive(req.transcript_chunk, req.transcript_language),
         video_title=req.video_title,
         video_url=req.video_url,
         start_ts=req.start_ts,
         end_ts=req.end_ts,
         style_anchors=style_anchors,
         frames=frames,
+    )
+
+
+def _with_language_directive(chunk: str, language: str) -> str:
+    """Ask for English notes when the captions are not in English.
+
+    Deliberately applied here rather than threaded through generate_section and
+    all three engine clients: it is a one-line hint, and putting it in the chunk
+    means every engine (haiku, gemini, every OpenAI-compatible provider) picks it
+    up with no per-client change. The bracket makes it read as an instruction
+    rather than as transcript content the model might try to write up.
+    """
+    if language.lower().startswith("english"):
+        return chunk
+    return (
+        f"[The transcript below is in {language}. Write the notes themselves in English. "
+        f"Keep technical terms as they were spoken if there is no clean English equivalent.]\n\n"
+        + chunk
     )
 
 
