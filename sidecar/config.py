@@ -49,27 +49,16 @@ _vault_setting = _setting("VAULT_PATH")
 VAULT_PATH = Path(_vault_setting) if _vault_setting else _default_vault_path()
 VAULT_PATH.mkdir(parents=True, exist_ok=True)
 
-# "gemini" (transcript + candidate video frames) or "haiku" (transcript only,
-# via the local `claude` CLI). Static config toggle, not a runtime fallback.
-# Haiku is the default. Gemini's free tier is genuinely $0, but capped at 20
-# generateContent calls/day for gemini-3.5-flash, shared across the whole
-# Google Cloud project -- confirmed by hitting a 429 RESOURCE_EXHAUSTED
-# after ~6 chunk calls on a single 10-minute video. Live note-taking fires
-# one call per ~60s chunk for every video watched all day; a single normal
-# lecture-length video would exhaust the entire day's quota on its own, and
-# starve the batch /watch pipeline (which needs it far less -- one call per
-# whole video) of the same shared pool. Haiku's local-CLI path has no such
-# cap. Set MARGIN_ENGINE=gemini to override for short/deliberate tests.
-NOTE_ENGINE = _setting("ENGINE", "haiku")
+# v2 port. v1 runs on 8765; keeping them apart means both can be installed
+# at once and falling back to v1 is a matter of which sidecar you start.
+PORT = int(_setting("PORT", "8766"))
 
-# Single source of truth for the frontmatter `engine:` field, so a note
-# always records which model actually wrote it rather than a hardcoded value.
-ENGINE_LABELS = {
-    "gemini": "gemini-3.5-flash",
-    "haiku": "claude-haiku-4-5-20251001",
-}
-
-KEYS_PATH = Path.home() / ".config" / "keys.env"
+# Where API keys come from, in this order: the environment, Margin's own key
+# file (the settings page writes it), then ~/.config/keys.env for people who
+# keep their keys there. A name set in several places uses all of them.
+MARGIN_KEYS_PATH = Path(os.environ.get("MARGIN_KEYS_FILE") or Path.home() / ".margin" / "keys.env")
+SHARED_KEYS_PATH = Path.home() / ".config" / "keys.env"
+KEYS_PATH = SHARED_KEYS_PATH  # the file older versions read
 
 # Auto-wikilink concepts in generated notes against titles already in the
 # vault, turning isolated notes into a connected Obsidian graph. On by
@@ -81,27 +70,55 @@ AUTOLINK = _setting("AUTOLINK", "1") not in ("0", "false", "False")
 MAX_AUTOLINKS_PER_SECTION = int(_setting("MAX_AUTOLINKS", "8"))
 
 
+def _numbered(env_name: str, pairs) -> list[str]:
+    pattern = re.compile(rf"^{re.escape(env_name)}(?:_(\d+))?$")
+    numbered: dict[int, str] = {}
+    for name, value in pairs:
+        m = pattern.match(name)
+        if m and value.strip():
+            numbered[int(m.group(1)) if m.group(1) else 1] = value.strip()
+    return [numbered[i] for i in sorted(numbered)]
+
+
+def _file_pairs(path: Path):
+    if not path.exists():
+        return []
+    pairs = []
+    for line in path.read_text().splitlines():
+        m = re.match(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$', line)
+        if m and not line.strip().startswith("#"):
+            pairs.append((m.group(1), m.group(2)))
+    return pairs
+
+
+def key_sources() -> list[tuple[str, list[tuple[str, str]]]]:
+    return [("environment", list(os.environ.items())), ("margin", _file_pairs(MARGIN_KEYS_PATH)),
+            ("shared", _file_pairs(KEYS_PATH))]
+
+
 def load_api_keys(env_name: str) -> list[str]:
     """All configured keys for one env var name, in numbered order:
     NAME, then NAME_2, NAME_3, ... -- e.g. one per account, each with its own
     independent daily free-tier quota. Ignores commented-out lines (leading `#`).
+    Read from the environment, Margin's key file and ~/.config/keys.env.
 
-    Generic so every provider in providers.py gets multi-key rotation for free,
-    not just Gemini (which is where the pattern started, because its free tier
-    caps at 20 calls/day/key).
+    Every engine in llm.py reads its keys through this, so any of them can be
+    given several accounts' keys and rotate across their free tiers.
     """
-    if not KEYS_PATH.exists():
-        return []
-    pattern = re.compile(rf'^\s*{re.escape(env_name)}(?:_(\d+))?\s*=\s*"?([^"\n]+)"?')
-    numbered: dict[int, str] = {}
-    for line in KEYS_PATH.read_text().splitlines():
-        if line.strip().startswith("#"):
-            continue
-        match = pattern.match(line)
-        if match:
-            suffix, value = match.groups()
-            numbered[int(suffix) if suffix else 1] = value.strip()
-    return [numbered[i] for i in sorted(numbered)]
+    found: list[str] = []
+    for _where, pairs in key_sources():
+        for value in _numbered(env_name, pairs):
+            if value not in found:
+                found.append(value)
+    return found
+
+
+def key_location(env_name: str) -> str | None:
+    """Where a key is set ("environment", "margin", "shared"), never its value."""
+    for where, pairs in key_sources():
+        if _numbered(env_name, pairs):
+            return where
+    return None
 
 
 def load_gemini_api_keys() -> list[str]:

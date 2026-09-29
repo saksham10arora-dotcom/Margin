@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Margin settings</title>
+  <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="app/models-ui.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="dot" id="live"></span>Margin</div>
+    <nav aria-label="Sections">
+      <a href="#models">Model order</a>
+      <a href="#subscriptions">Subscriptions</a>
+      <a href="#keys">API keys</a>
+      <a href="#local">On this Mac</a>
+    </nav>
+  </header>
+  <main>
+    <div class="status" id="status" hidden></div>
+
+    <section id="models" class="section">
+      <div id="order"></div>
+    </section>
+
+    <section id="subscriptions" class="section">
+      <h2>Subscriptions</h2>
+      <p class="lede">A plan you already pay for, used through the company's own command-line tool you are signed in to.
+        Each counts against that plan, so Margin writes at most 30 notes a day with each.</p>
+      <div id="subs" class="rows"></div>
+    </section>
+
+    <section id="keys" class="section">
+      <h2>API keys</h2>
+      <p class="lede">Saved on this Mac in <code>~/.margin/keys.env</code>, readable by you only. Margin never shows a
+        key again once saved, and never sends one anywhere but its own provider. Keys you keep in your environment or in
+        <code>~/.config/keys.env</code> are used too.</p>
+      <input class="search" id="key-search" type="search" placeholder="Search providers" autocomplete="off" spellcheck="false">
+      <div id="key-rows" class="rows"></div>
+    </section>
+
+    <section id="local" class="section">
+      <h2>On this Mac</h2>
+      <p class="lede">Models that run on your own computer: free, private, work offline. They are slower and usually
+        weaker than the big ones, and most cannot see slides.</p>
+      <div id="local-rows" class="rows"></div>
+    </section>
+  </main>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# Margin: extra engines. Copy to ~/.margin/engines.toml to use.
+#
+# Any OpenAI-compatible API works, cloud or on this Mac. `provider` is a
+# preset that fills in the address and the key's name in ~/.config/keys.env:
+#   openai anthropic gemini openrouter groq cerebras fireworks together
+#   deepseek mistral xai   and local: ollama lmstudio llamacpp vllm
+# Or give base_url (and key = "NAME_OF_KEY") yourself.
+#
+# Check what answers:   venv/bin/python -m sidecar.llm --test
+
+# Fast and free-tier friendly, but text-only: it cannot see the slides.
+# Groq's free tier allows ~8k tokens a minute, about one note a minute.
+[engines.groq]
+provider = "groq"
+model = "openai/gpt-oss-120b"
+
+# A model on this Mac, for when you are offline or want nothing to leave it.
+# Local engines count as "lite": their notes are rewritten by a full model
+# once one answers. `context` is how many tokens the model reads; longer
+# lectures are trimmed to fit. Set vision = true only for a vision model.
+[engines.local]
+provider = "ollama"
+model = "qwen3.5:9b"
+context = 32000
+
+# Without `chain`, these join the default order: full engines before the
+# Gemini Lite fallback, lite (local) ones after it. To choose yourself:
+# chain = ["gemini", "claude", "groq", "openrouter", "gemini-lite", "local"]

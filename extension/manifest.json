@@ -1,15 +1,25 @@
 {
   "manifest_version": 3,
   "name": "Margin",
-  "version": "0.1.0",
-  "description": "Live lecture notes from YouTube transcripts, written straight to your Obsidian vault. Optionally includes relevant video screenshots.",
-  "permissions": [],
-  "host_permissions": ["*://*.youtube.com/*", "http://localhost:8765/*"],
+  "version": "2.8.0",
+  "description": "Watch a lecture anywhere. Margin captures the slides and speech, then writes visual notes and a runnable notebook into your vault.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://*.udemy.com/*",
+    "*://*.udemycdn.com/*",
+    "*://*.coursera.org/*",
+    "http://localhost:8766/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Toggle Margin panel",
+    "default_title": "Margin (Alt+Shift+M)",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -17,19 +27,41 @@
       "128": "icons/icon128.png"
     }
   },
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "Show or hide Margin"
+    }
+  },
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/watch*"],
-      "js": ["vendor/marked.min.js", "vendor/katex.min.js", "vendor/auto-render.min.js", "content-script.js"],
-      "css": ["panel.css", "vendor/katex.min.css"],
-      "run_at": "document_idle",
-      "world": "ISOLATED"
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.udemy.com/course/*",
+        "*://*.coursera.org/learn/*"
+      ],
+      "js": [
+        "vendor/marked.min.js",
+        "vendor/katex.min.js",
+        "vendor/auto-render.min.js",
+        "boot.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["panel.js", "transcript.js", "renderer.js", "vendor/marked.min.js", "vendor/katex.min.js", "vendor/auto-render.min.js", "vendor/fonts/*"],
-      "matches": ["*://*.youtube.com/*"]
+      "resources": [
+        "app/*",
+        "vendor/katex.min.css",
+        "vendor/fonts/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {
@@ -37,5 +69,9 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "options_ui": {
+    "page": "settings.html",
+    "open_in_tab": true
   }
 }
