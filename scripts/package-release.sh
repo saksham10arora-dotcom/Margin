@@ -18,7 +18,8 @@ git ls-files -z extension sidecar scripts install.sh README.md LICENSE NOTICE IS
       mkdir -p "$STAGE/$(dirname "$f")"
       cp -p "$f" "$STAGE/$f"
     done
-mkdir -p "$STAGE/docs" && cp -p docs/*.png "$STAGE/docs/"
+# The README's pictures stay on GitHub, where the README is read: at twice the
+# pixels they would double the download.
 
 # Never ship a key: the same patterns the sidecar scrubs from its log.
 if grep -rIEl '(AIza[0-9A-Za-z_-]{30,}|AQ\.Ab8[A-Za-z0-9_-]{10,}|sk-(ant|proj|or)-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9]{30,}|ghp_[A-Za-z0-9]{30,})' "$STAGE"; then

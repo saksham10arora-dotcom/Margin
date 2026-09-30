@@ -335,7 +335,10 @@ export class Panel {
     let card = this.cards.get(id);
     if (!card) {
       card = document.createElement('article');
-      card.className = 'card';
+      // Fades in once, as it arrives. As a plain .card animation it replayed on
+      // every card each time the Live tab was shown again.
+      card.className = 'card entering';
+      card.addEventListener('animationend', () => card.classList.remove('entering'), { once: true });
       card.innerHTML = `<div class="card-img"><img alt="Slide at ${formatTs(t)}" hidden><button class="ts-chip" data-seek="${Math.floor(t)}">${formatTs(t)}</button></div><p class="card-text"></p>`;
       // Keep cards in video order even when frames arrive out of order (seeking back).
       const after = [...this.cards.values()].find((c) => Number(c.dataset.t) > t);

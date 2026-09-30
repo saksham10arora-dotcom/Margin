@@ -231,8 +231,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .card {
   display: grid;
   gap: 8px;
-  animation: enter 0.45s var(--ease) both;
 }
+.card.entering { animation: enter 0.45s var(--ease) both; }
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } }
 .card-img {
   position: relative;

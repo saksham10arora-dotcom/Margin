@@ -18,10 +18,12 @@ import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const lectureDir = path.resolve(process.argv[2] || '');
-const outDir = path.resolve(process.argv[3] || 'model-menu-out');
-const PROVIDER = process.argv[4] || 'groq';
-const MODEL = process.argv[5] || 'openai/gpt-oss-120b';
+// Positional arguments, with flags like --hidpi anywhere among them.
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const lectureDir = path.resolve(args[0] || '');
+const outDir = path.resolve(args[1] || 'model-menu-out');
+const PROVIDER = args[2] || 'groq';
+const MODEL = args[3] || 'openai/gpt-oss-120b';
 mkdirSync(outDir, { recursive: true });
 if (!existsSync(path.join(lectureDir, 'index.html'))) {
   console.error('usage: node scripts/e2e/resilience.mjs <lecture-dir made by make_lecture.py>');
@@ -113,7 +115,7 @@ try {
     executablePath: findChrome(), headless: 'new', protocolTimeout: 90000,
     args: [`--disable-extensions-except=${testExtension()}`, `--load-extension=${path.join(work, 'extension')}`,
       '--autoplay-policy=no-user-gesture-required', '--window-size=1500,920', `--user-data-dir=${path.join(work, 'profile')}`],
-    defaultViewport: { width: 1500, height: 920 },
+    defaultViewport: { width: 1500, height: 920, deviceScaleFactor: process.argv.includes('--hidpi') ? 2 : 1 },
   });
   const page = await browser.newPage();
   const errors = [];

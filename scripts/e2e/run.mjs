@@ -19,6 +19,7 @@ import puppeteer from 'puppeteer-core';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [lectureDir, outDir] = process.argv.slice(2);
 const noCompose = process.argv.includes('--no-compose');
+// --hidpi: screenshots at twice the pixels, for the README and the site.
 // --record: video of the lecture playing (rec-play.webm) and of a tour through
 // the finished note and code (rec-note.webm), for the README's GIF.
 const record = process.argv.includes('--record');
@@ -144,7 +145,7 @@ try {
       '--window-size=1500,920',
       `--user-data-dir=${path.join(work, 'profile')}`,
     ],
-    defaultViewport: { width: 1500, height: 920 },
+    defaultViewport: { width: 1500, height: 920, deviceScaleFactor: process.argv.includes('--hidpi') ? 2 : 1 },
     protocolTimeout: 60000,
   });
   const page = await browser.newPage();
