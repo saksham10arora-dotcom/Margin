@@ -13,8 +13,12 @@
 # and that one folder, nothing broader.
 #
 # A LaunchAgent opens the app at login and then once a minute. Each time, the
-# app checks whether the sidecar answers and starts it only if it does not, so
-# it also comes back by itself after a crash or after you stop a terminal copy.
+# app checks whether anything is listening on Margin's port and starts the
+# sidecar only if nothing is, so it also comes back by itself after a crash or
+# after you stop a terminal copy. Listening, not answering: a sidecar busy
+# writing a note can take seconds to answer, and starting a second one then
+# only fails (the port is taken) after reading start.sh on the Desktop, which
+# made macOS ask for access again and again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -34,7 +38,7 @@ build_app() {
   [ -f "$script" ] && old="$(cat "$script")"
   cat >"$script" <<APPLESCRIPT
 on run
-	do shell script "if ! /usr/bin/curl -s --max-time 2 http://127.0.0.1:$PORT/health >/dev/null; then export MARGIN_VAULT_PATH=" & quoted form of "$vault" & "; export MARGIN_PORT=$PORT; export PATH=" & quoted form of "$path_env" & "; nohup " & quoted form of "$ROOT/scripts/start.sh" & " >> " & quoted form of "$LOG" & " 2>&1 & fi"
+	do shell script "if ! /usr/bin/nc -z -G 2 127.0.0.1 $PORT 2>/dev/null; then export MARGIN_VAULT_PATH=" & quoted form of "$vault" & "; export MARGIN_PORT=$PORT; export PATH=" & quoted form of "$path_env" & "; nohup " & quoted form of "$ROOT/scripts/start.sh" & " >> " & quoted form of "$LOG" & " 2>&1 & fi"
 end run
 APPLESCRIPT
   # Unchanged since last time: keep the app as it is. A rebuilt app is a new app
