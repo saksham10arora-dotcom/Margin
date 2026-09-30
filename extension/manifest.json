@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Margin",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "description": "Watch a lecture anywhere. Margin captures the slides and speech, then writes visual notes and a runnable notebook into your vault.",
   "permissions": [
     "storage",

@@ -419,7 +419,7 @@ def compose(session: Session, previous_gist: str | None = None, progress=None,
     raw, engine = generate(prompt, pictures, progress=progress, quality=quality, accept=is_complete,
                            choice=choice)
     note, gist, cells = parse_response(raw)
-    used = sorted(set(re.findall(r"\{\{slide:(S\d{3})\}\}", note)))
+    used = sorted(set(re.findall(r"\{\{slide:(S\d{3,4})\}\}", note)))
     return Composition(note_body=note, gist=gist, cells=cells, engine=engine, slides_used=used,
                        code_source=repo_notebook["source"] if repo_notebook and cells else None,
                        engine_chosen=bool(choice) and str(choice.get("model")) in engine)
@@ -472,7 +472,7 @@ def place_slides(markdown: str, session: Session, vault: Path, meta: dict) -> tu
         written.append(name)
         return f"![[assets/{name}|720]]"
 
-    return re.sub(r"\{\{slide:(S\d{3})\}\}", repl, markdown), written
+    return re.sub(r"\{\{slide:(S\d{3,4})\}\}", repl, markdown), written
 
 
 def frontmatter(meta: dict, comp: Composition, extra: dict) -> str:

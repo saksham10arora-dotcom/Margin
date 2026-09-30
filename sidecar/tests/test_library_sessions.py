@@ -312,3 +312,36 @@ def test_the_same_slide_with_the_face_moving_is_one_slide_and_builds_up(tmp_path
     # The mask is remembered for captures sent without one.
     s.add_frame(25, _two_panel("Closed-Source Frontier", ["GPT", "Claude", "Gemini"], 4))
     assert len(s.frames) == 1
+
+
+def _patch_of_the_face():
+    import base64 as b64
+    bits = np.zeros((36, 64), dtype=np.uint8)
+    bits[3:7, 57:61] = 1  # the browser saw only part of the head moving
+    return unpack_moving(b64.b64encode(np.packbits(bits.ravel()).tobytes()).decode())
+
+
+def test_a_head_moving_past_the_patch_the_browser_saw_is_still_one_slide(tmp_path):
+    # Lecture 17: the mask covered 1% of the frame, the head moved over 8%,
+    # and 100 captures were kept of about 20 screens.
+    s = open_session(UDEMY, root=tmp_path)
+    for i, t in enumerate(range(10, 60, 5)):
+        s.add_frame(t, _two_panel("Closed-Source Frontier", ["GPT"], i), _patch_of_the_face())
+    assert len(s.frames) == 1
+    s.add_frame(70, _two_panel("Open-Source Frontier", ["Llama"], 99), _patch_of_the_face())
+    assert len(s.frames) == 2  # a new slide is still a new slide
+
+
+def test_clean_up_refolds_old_captures_without_reusing_ids(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    for i, t in enumerate((10, 20, 30)):  # an older Margin kept every one of these
+        s.add_frame(t, _two_panel("Closed-Source Frontier", ["GPT"], i))
+    assert len(s.frames) == 3
+    np.save(s.root / "frames" / "moving.npy", _face_mask())
+    report = s.compact_frames()
+    assert (report["before"], report["after"]) == (3, 1) and len(s.frames) == 3  # a report changes nothing
+    s.compact_frames(apply=True)
+    # After the old ids, so a note's pictures in the vault are never replaced by another slide.
+    assert [(f["id"], f["t"], f["t_last"]) for f in s.frames] == [("S004", 10, 30)]
+    assert sorted(p.name for p in (s.root / "frames").glob("S*")) == ["S004.jpg", "S004.npy"]
+    assert s.frame_bytes("S004")

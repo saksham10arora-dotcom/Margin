@@ -27,6 +27,7 @@ import io
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from dataclasses import dataclass
@@ -55,6 +56,17 @@ BLANK_INK = 0.002       # less ink than this is an empty frame
 # the earlier ink: on a slide that is mostly a fixed illustration, a new title
 # is a sliver of the ink but must still make a new slide.
 LOST_OF_IMAGE = 0.0015
+# The presenter (a face bubble, or a cut-out head that leans and gestures) is
+# left out of every comparison. The browser marks the pixels that changed in
+# recent samples: a patchy shape of whichever part of the head moved lately.
+# Measured on a real lecture it covered 1% of the frame while the head moved
+# over 8%, so every gesture looked like a new slide (100 captures of about 20
+# screens, 44 of 2 slides). So each moving blob becomes its box with room to
+# move in, and the lecture remembers where the presenter has been.
+PRESENTER_PAD = 12          # thumbnail pixels of room around a moving blob
+PRESENTER_MIN_PIXELS = 10   # fewer moving pixels than this is a stray speck, not a presenter
+PRESENTER_MIN_SIDE = 5      # a blob thinner than this is a line being typed, not a presenter
+PRESENTER_MAX = 0.3         # a moving area larger than this share of the frame is not a person
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -127,6 +139,55 @@ def contains(bigger: np.ndarray, smaller: np.ndarray, ignore: np.ndarray | None 
         return True  # an empty frame is contained in anything
     lost = int(((_difference(bigger, smaller) >= INK_DELTA) & ink).sum())
     return lost / marks <= 1 - KEEP_TO_CONTAIN and lost / ink.size <= LOST_OF_IMAGE
+
+
+def _grow(mask: np.ndarray, steps: int) -> np.ndarray:
+    out = mask.copy()
+    for _ in range(steps):
+        grown = out.copy()
+        grown[1:] |= out[:-1]
+        grown[:-1] |= out[1:]
+        grown[:, 1:] |= out[:, :-1]
+        grown[:, :-1] |= out[:, 1:]
+        out = grown
+    return out
+
+
+def _blobs(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Bounding boxes (y0, y1, x0, x1) of the connected areas of a mask."""
+    seen = np.zeros(mask.shape, dtype=bool)
+    h, w = mask.shape
+    boxes = []
+    for y, x in zip(*np.nonzero(mask)):
+        if seen[y, x]:
+            continue
+        seen[y, x] = True
+        stack = [(y, x)]
+        y0 = y1 = y
+        x0 = x1 = x
+        while stack:
+            cy, cx = stack.pop()
+            y0, y1, x0, x1 = min(y0, cy), max(y1, cy), min(x0, cx), max(x1, cx)
+            for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    stack.append((ny, nx))
+        boxes.append((int(y0), int(y1) + 1, int(x0), int(x1) + 1))
+    return boxes
+
+
+def presenter_area(moving: np.ndarray | None) -> np.ndarray | None:
+    """Where the presenter can be: each moving blob's box, with room to move."""
+    if moving is None or not moving.any():
+        return None
+    area = np.zeros(moving.shape, dtype=bool)
+    for y0, y1, x0, x1 in _blobs(_grow(moving, 2)):
+        ys, xs = np.nonzero(moving[y0:y1, x0:x1])
+        if len(ys) < PRESENTER_MIN_PIXELS or np.ptp(ys) + 1 < PRESENTER_MIN_SIDE or np.ptp(xs) + 1 < PRESENTER_MIN_SIDE:
+            continue
+        pad = PRESENTER_PAD
+        area[max(0, y0 - pad):y1 + pad, max(0, x0 - pad):x1 + pad] = True
+    return area if area.any() else None
 
 
 def unpack_moving(packed: str | None) -> np.ndarray | None:
@@ -266,13 +327,7 @@ class Session:
             frames = self._read("frames.json", [])
             frames_dir = self.root / "frames"
             frames_dir.mkdir(exist_ok=True)
-            # The moving area the browser saw (a face bubble); remembered for
-            # captures that arrive without one.
-            if moving is not None:
-                np.save(frames_dir / "moving.npy", moving)
-            elif (frames_dir / "moving.npy").exists():
-                moving = np.load(frames_dir / "moving.npy")
-            frames_dir.mkdir(exist_ok=True)
+            moving = self._presenter(frames_dir, moving)
             # Nearest in time first: the slide being built is almost always the last one.
             for frame in sorted(frames, key=lambda f: abs(f["t_last"] - t)):
                 if abs(frame["t_last"] - t) > 900:
@@ -291,7 +346,7 @@ class Session:
                     return {**frame, "duplicate": True}
                 if contains(thumb, other, moving):
                     (frames_dir / frame["file"]).write_bytes(jpeg)
-                    np.save(frames_dir / f"{frame['id']}.npy", thumb)
+                    np.save(frames_dir / f"{frame['id']}.npy", thumb.astype(np.uint8))
                     frame["t"] = min(frame["t"], t)
                     frame["t_last"] = max(frame["t_last"], t)
                     frame.update(w=image.width, h=image.height)
@@ -299,29 +354,100 @@ class Session:
                     self._write("frames.json", frames)
                     self._bump()  # a fuller version of a kept slide
                     return {**frame, "duplicate": True}
-            frame_id = f"S{len(frames) + 1:03d}"
+            # One past the highest id, not the count: after a clean-up removed
+            # some, the count would hand out an id still in use.
+            frame_id = f"S{max((int(f['id'][1:]) for f in frames), default=0) + 1:03d}"
             record = {"id": frame_id, "t": t, "t_last": t, "file": f"{frame_id}.jpg",
                       "w": image.width, "h": image.height}
             (frames_dir / record["file"]).write_bytes(jpeg)
-            np.save(frames_dir / f"{frame_id}.npy", thumb)
+            np.save(frames_dir / f"{frame_id}.npy", thumb.astype(np.uint8))
             frames.append(record)
             frames.sort(key=lambda f: f["t"])
             self._write("frames.json", frames)
             self._bump()
             return {**record, "duplicate": False}
 
+    def _presenter(self, frames_dir: Path, moving: np.ndarray | None) -> np.ndarray | None:
+        """What to leave out of comparisons: where the presenter moves now,
+        and everywhere they were seen moving in at least two captures of this
+        lecture. Two, so a one-off (a scroll, a menu opening) is not ignored
+        for the rest of the lecture while the presenter, in nearly every
+        capture, is remembered at once."""
+        path = frames_dir / "presenter.npy"
+        seen = np.load(path) if path.exists() else None  # per pixel: in how many captures
+        if seen is None and (frames_dir / "moving.npy").exists():
+            old = presenter_area(np.load(frames_dir / "moving.npy"))  # an older Margin kept the last one only
+            seen = None if old is None else old.astype(np.uint8) * 2
+        area = presenter_area(moving)
+        if area is not None and area.mean() > PRESENTER_MAX:
+            area = None  # far bigger than a person: a scroll or a video clip
+        if area is not None:
+            seen = area.astype(np.uint8) if seen is None else np.minimum(seen.astype(np.int32) + area, 255).astype(np.uint8)
+            np.save(path, seen)
+        known = None if seen is None else seen >= 2
+        if area is not None:
+            known = area if known is None else known | area
+        return known if known is not None and known.any() else None
+
     def _thumb(self, frame: dict) -> np.ndarray | None:
         cached = self.root / "frames" / f"{frame['id']}.npy"
         if cached.exists():
             thumb = np.load(cached)
             if thumb.ndim == 3:
-                return thumb
+                return thumb.astype(np.int16)  # stored as bytes; compared as signed numbers
         path = self.root / "frames" / frame["file"]
         if not path.exists():
             return None
         thumb = grey_thumb(Image.open(path))  # grey from an older Margin: redone in colour
-        np.save(cached, thumb)
+        np.save(cached, thumb.astype(np.uint8))
         return thumb
+
+    def compact_frames(self, apply: bool = False) -> dict:
+        """Fold a lecture's captures together again with today's rules, for
+        one captured before them. Every kept capture is replayed, in time
+        order, into a scratch copy; with `apply` the copy replaces the frames.
+        Notes already written keep their pictures: those were copied into the
+        vault when the note was written."""
+        frames_dir = self.root / "frames"
+        scratch_root = self.root / ".compact"
+        with _lock_for(self.key):
+            frames = sorted(self.frames, key=lambda f: f["t"])
+            before = sum(p.stat().st_size for p in frames_dir.glob("S*")) if frames_dir.exists() else 0
+            shutil.rmtree(scratch_root, ignore_errors=True)
+            (scratch_root / "frames").mkdir(parents=True)
+            for name in ("presenter.npy", "moving.npy"):
+                if (frames_dir / name).exists():
+                    shutil.copyfile(frames_dir / name, scratch_root / "frames" / name)
+            scratch = Session(key=f"{self.key}.compact", root=scratch_root)
+            for frame in frames:
+                path = frames_dir / frame["file"]
+                if path.exists():
+                    jpeg = path.read_bytes()
+                    for t in sorted({frame["t"], frame["t_last"]}):
+                        scratch.add_frame(t, jpeg)
+            kept = scratch.frames
+            after = sum(p.stat().st_size for p in (scratch_root / "frames").glob("S*"))
+            if apply and len(kept) < len(frames):
+                # Numbered after the old ids, never reusing one: a note already
+                # written has its pictures in the vault under the old ids, and a
+                # later rewrite must not put a different slide in their place.
+                offset = max(int(f["id"][1:]) for f in frames)
+                for frame in kept:
+                    new = f"S{int(frame['id'][1:]) + offset:03d}"
+                    for ext in (".jpg", ".npy"):
+                        src = scratch_root / "frames" / f"{frame['id']}{ext}"
+                        if src.exists():
+                            src.rename(scratch_root / "frames" / f"{new}{ext}")
+                    frame.update(id=new, file=f"{new}.jpg")
+                old = self.root / ".frames-old"
+                shutil.rmtree(old, ignore_errors=True)
+                frames_dir.rename(old)
+                (scratch_root / "frames").rename(frames_dir)
+                self._write("frames.json", kept)
+                shutil.rmtree(old)
+            shutil.rmtree(scratch_root, ignore_errors=True)
+        return {"key": self.key, "title": self.meta.get("lecture_title"), "before": len(frames),
+                "after": len(kept), "bytes_before": before, "bytes_after": after}
 
     def frame_bytes(self, frame_id: str) -> bytes | None:
         for frame in self.frames:
@@ -506,3 +632,15 @@ def course_sessions(course_id: str, root: Path | None = None) -> list[Session]:
         if str(session.meta.get("course_id")) == str(course_id):
             found.append(session)
     return found
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fold captured slides together again with the current rules.")
+    parser.add_argument("--apply", action="store_true", help="replace the frames (without it, only report)")
+    args = parser.parse_args()
+    for session in all_sessions():
+        r = session.compact_frames(apply=args.apply)
+        if r["before"]:
+            print(f"{r['before']:4d} -> {r['after']:3d} slides  {r['bytes_before'] / 1e6:5.1f} -> {r['bytes_after'] / 1e6:4.1f} MB  {r['title']}")

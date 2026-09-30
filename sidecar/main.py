@@ -99,7 +99,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.8.0"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers)
+VERSION = "2.8.1"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -257,7 +257,7 @@ def post_frame(key: str, payload: FramePayload):
 
 @app.get("/session/{key}/frame/{frame_id}")
 def get_frame(key: str, frame_id: str):
-    if not re.fullmatch(r"S\d{3}", frame_id):
+    if not re.fullmatch(r"S\d{3,4}", frame_id):
         raise HTTPException(status_code=400, detail="Bad frame id")
     data = _session_or_404(key).frame_bytes(frame_id)
     if data is None:
