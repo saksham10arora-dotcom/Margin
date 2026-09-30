@@ -10,7 +10,7 @@ NAME="margin-$VERSION"
 STAGE=$(mktemp -d)/$NAME
 mkdir -p "$STAGE" dist
 
-git ls-files -z extension sidecar scripts install.sh README.md LICENSE ISSUES.md engines.example.toml keys.env.example \
+git ls-files -z extension sidecar scripts install.sh README.md LICENSE NOTICE ISSUES.md engines.example.toml keys.env.example \
   | while IFS= read -r -d '' f; do
       case "$f" in
         sidecar/tests/*|scripts/e2e/*|*/__pycache__/*|*.test.js) continue ;;

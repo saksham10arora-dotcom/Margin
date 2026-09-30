@@ -197,4 +197,4 @@ The end-to-end tests drive the real extension in Chrome for Testing 131
 
 ## License
 
-MIT. Made by [Saksham Arora](https://saksham.digital).
+[Apache-2.0](LICENSE): use it anywhere, including at work. Made by [Saksham Arora](https://saksham.digital).
