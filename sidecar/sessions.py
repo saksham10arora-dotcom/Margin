@@ -47,7 +47,7 @@ SESSIONS_ROOT = Path(os.environ.get("MARGIN_SESSIONS_PATH") or Path.home() / ".m
 # typed), and it replaces the earlier one. A new slide redraws its title and
 # body, so most of the earlier ink is gone.
 THUMB_SIZE = (160, 90)
-FINE_SIZE = (480, 270)  # the sharper second look before a capture is dropped (Session._part_of)
+FINE_SIZE = (480, 270)  # the sharper second look at every match (_sharp)
 INK_DELTA = 40          # grey levels from the background that count as a mark
 KEEP_TO_CONTAIN = 0.92  # share of the earlier ink that must survive
 NEW_SPEECH_SECONDS = 3.0  # transcribed speech outside what was heard before that counts as new
@@ -68,6 +68,27 @@ PRESENTER_PAD = 12          # thumbnail pixels of room around a moving blob
 PRESENTER_MIN_PIXELS = 10   # fewer moving pixels than this is a stray speck, not a presenter
 PRESENTER_MIN_SIDE = 5      # a blob thinner than this is a line being typed, not a presenter
 PRESENTER_MAX = 0.3         # a moving area larger than this share of the frame is not a person
+# A lecture written by hand on paper: the writer's hand is in most captures, a
+# different part of the page each time, so every capture had "ink" the next one
+# lacked and hid writing the last one had. A real 10 minute lecture kept 47
+# captures of 3 pages. The hand is thick and skin-toned and comes in from the
+# frame's edge, with a grey shadow beside it; writing is thin strokes. So the
+# hand and its shadow are left out of a comparison, in either capture.
+HAND_MIN_PIXELS = 60        # thumbnail pixels: smaller is a knuckle or a pen tip, not a hand
+HAND_PAD = 6                # room around the hand
+HAND_MIN_WRITING = 0.006    # a capture with a hand in it and less writing than this in view adds nothing
+PEN_REACH = 20              # thumbnail pixels of ink followed out of the hand: the pen it holds
+SHADE_SPREAD = 24           # max - min of R, G, B: grey enough to be the hand's shadow
+# The page also slides a little as it is written on, and a moved page is a new
+# picture pixel by pixel. When the plain comparison fails, the two captures are
+# lined up by their writing and compared again. Writing that left the frame
+# still counts as missing: a page scrolled far enough to hide lines keeps both.
+MAX_SHIFT = 16              # thumbnail pixels either way (about a sixth of the height)
+MORE_WRITING = 0.05         # a capture folded into a kept one replaces it with this much more writing
+MORE_WRITING_MIN = 20       # and at least this many more thumbnail pixels of it
+LOST_WORD = 40              # FINE_SIZE pixels missing in one cluster: a word, not specks of noise
+REGIONS = (6, 4)            # columns and rows of FINE_SIZE regions, each lined up on its own
+REGION_SLACK = 2            # pixels either way a region may move: a page bending, not a new word
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -154,6 +175,10 @@ def _grow(mask: np.ndarray, steps: int) -> np.ndarray:
     return out
 
 
+def _shrink(mask: np.ndarray, steps: int) -> np.ndarray:
+    return ~_grow(~mask, steps)
+
+
 def _blobs(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
     """Bounding boxes (y0, y1, x0, x1) of the connected areas of a mask."""
     seen = np.zeros(mask.shape, dtype=bool)
@@ -189,6 +214,192 @@ def presenter_area(moving: np.ndarray | None) -> np.ndarray | None:
         pad = PRESENTER_PAD
         area[max(0, y0 - pad):y1 + pad, max(0, x0 - pad):x1 + pad] = True
     return area if area.any() else None
+
+
+def _skin(thumb: np.ndarray) -> np.ndarray:
+    """Skin-toned pixels: the usual chroma box in YCbCr, any brightness."""
+    r, g, b = (thumb[..., i].astype(np.float32) for i in range(3))
+    cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+    cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+    return (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173)
+
+
+def strokes(thumb: np.ndarray) -> np.ndarray:
+    """The thin marks of a capture: writing and text, not a hand, a shadow, a
+    filled shape or the table's edge."""
+    ink = ink_mask(thumb)
+    return ink & ~_grow(_shrink(ink, 2), 3)
+
+
+def hand_area(thumb: np.ndarray) -> np.ndarray | None:
+    """Where a writer's hand is, with room for its pen and the shadow it casts."""
+    if thumb.ndim != 3:
+        return None
+    ink = ink_mask(thumb)
+    thick = _grow(_shrink(ink, 2), 2) & ink
+    skin = _skin(thumb) & thick
+    h, w = skin.shape
+    hand = np.zeros(skin.shape, dtype=bool)
+    for y0, y1, x0, x1 in _blobs(skin):
+        part = skin[y0:y1, x0:x1]
+        if part.sum() >= HAND_MIN_PIXELS and (y0 == 0 or x0 == 0 or y1 == h or x1 == w):
+            hand[y0:y1, x0:x1] |= part
+    if not hand.any():
+        return None
+    near = _grow(hand, 2)
+    shade = ((thumb.max(axis=2) - thumb.min(axis=2)) <= SHADE_SPREAD) & thick & ~hand
+    for y0, y1, x0, x1 in _blobs(shade):
+        part = shade[y0:y1, x0:x1]
+        if (part & near[y0:y1, x0:x1]).any():
+            hand[y0:y1, x0:x1] |= part
+    # The pen: ink that runs on out of the hand, followed for a short way. Its
+    # tip is where the newest writing is, which the next capture shows anyway.
+    for _ in range(PEN_REACH):
+        hand = hand | (_grow(hand, 1) & ink)
+    return _grow(hand, HAND_PAD)
+
+
+def _either(*masks: np.ndarray | None) -> np.ndarray | None:
+    present = [m for m in masks if m is not None]
+    return np.logical_or.reduce(present) if present else None
+
+
+def _shifted(image: np.ndarray, dy: int, dx: int, fill) -> np.ndarray:
+    """`image` moved by (dy, dx); what comes in from beyond its edge is `fill`."""
+    out = np.full(image.shape, fill, dtype=image.dtype)
+    h, w = image.shape[:2]
+    src_y, dst_y = (slice(0, h - dy), slice(dy, h)) if dy >= 0 else (slice(-dy, h), slice(0, h + dy))
+    src_x, dst_x = (slice(0, w - dx), slice(dx, w)) if dx >= 0 else (slice(-dx, w), slice(0, w + dx))
+    out[dst_y, dst_x] = image[src_y, src_x]
+    return out
+
+
+def best_shift(moving: np.ndarray, still: np.ndarray) -> tuple[int, int]:
+    """The (dy, dx) that lays `moving`'s writing best over `still`'s, found by
+    cross-correlating their thin strokes (a table edge or a shadow stays put
+    while the page moves, and would pin the answer to no shift at all)."""
+    h, w = still.shape[:2]
+    size = (2 * h, 2 * w)
+    a = np.fft.rfft2(strokes(moving).astype(np.float32), s=size)
+    b = np.fft.rfft2(strokes(still).astype(np.float32), s=size)
+    corr = np.fft.irfft2(b * np.conj(a), s=size)
+    window = np.roll(np.roll(corr, MAX_SHIFT, 0), MAX_SHIFT, 1)[:2 * MAX_SHIFT + 1, :2 * MAX_SHIFT + 1]
+    dy, dx = np.unravel_index(int(np.argmax(window)), window.shape)
+    return int(dy) - MAX_SHIFT, int(dx) - MAX_SHIFT
+
+
+def covers(bigger: np.ndarray, smaller: np.ndarray, moving: np.ndarray | None = None):
+    """Does `bigger` show everything written on `smaller`, leaving out the
+    presenter (`moving`) and a writer's hand? None if not; else how the two
+    were compared: (dy, dx, left out), to look again at the same alignment."""
+    hand_b = hand_area(bigger)
+    skip = _either(moving, hand_b, hand_area(smaller))
+    if skip is not None:
+        # Not blank but hidden, by a hand or a face: this says nothing. Counted
+        # in writing, as what stays in view besides (a table's edge, a shadow)
+        # is in every capture and would make any two pages look alike.
+        marks = strokes(smaller)
+        if (marks & ~skip).sum() < BLANK_INK * marks.size <= marks.sum():
+            return None
+    if contains(bigger, smaller, skip):
+        return 0, 0, skip
+    if bigger.shape != smaller.shape or bigger.ndim != 3:
+        return None
+    dy, dx = best_shift(bigger, smaller)
+    if (dy, dx) == (0, 0):
+        return None
+    moved = _shifted(bigger, dy, dx, -1000)  # beyond its edge nothing is shown, so nothing is contained
+    ink = ink_mask(smaller)
+    # A moved page: only its writing has to survive. What is thick (the table's
+    # edge, a shadow, a black bar) stays in place while the page moves.
+    skip = _either(moving, hand_area(smaller), None if hand_b is None else _shifted(hand_b, dy, dx, False),
+                   ink & ~strokes(smaller))
+    # Too little writing left to line up on: that says nothing, and an almost
+    # empty capture must not pass for part of whatever page came next.
+    if (ink & ~skip).sum() < BLANK_INK * ink.size:
+        return None
+    return (dy, dx, skip) if contains(moved, smaller, skip) else None
+
+
+def writing(thumb: np.ndarray) -> int:
+    """How much of the page a capture shows: its thin marks, not under a hand."""
+    if thumb.ndim != 3:
+        return 0
+    hand = hand_area(thumb)
+    marks = strokes(thumb)
+    return int((marks & ~hand).sum() if hand is not None else marks.sum())
+
+
+def shows_more(new: np.ndarray, kept: np.ndarray) -> bool:
+    """Clearly more writing, not the few pixels two captures of one slide
+    differ by: a rewatch must not swap the picture and call the note stale."""
+    a, b = writing(new), writing(kept)
+    return a > b * (1 + MORE_WRITING) + MORE_WRITING_MIN
+
+
+def _fine(image: Image.Image) -> np.ndarray:
+    return np.asarray(image.convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
+
+
+def _far_by_region(bigger: np.ndarray, smaller: np.ndarray, ink: np.ndarray) -> np.ndarray:
+    """Where `smaller`'s marks are missing from `bigger`, each region of the
+    picture lined up on its own within a couple of pixels: filmed paper bends
+    and a camera refocuses, so one shift never fits the whole page, while a
+    slide, which does not bend, lines up everywhere at once. Pixel for pixel
+    within a region, so a different word stays different."""
+    h, w = smaller.shape[:2]
+    r = REGION_SLACK
+    padded = np.pad(bigger, ((r, r), (r, r), (0, 0)), constant_values=-1000)
+    far = np.zeros((h, w), dtype=bool)
+    ys = np.linspace(0, h, REGIONS[1] + 1, dtype=int)
+    xs = np.linspace(0, w, REGIONS[0] + 1, dtype=int)
+    for y0, y1 in zip(ys[:-1], ys[1:]):
+        for x0, x1 in zip(xs[:-1], xs[1:]):
+            marks = ink[y0:y1, x0:x1]
+            if not marks.any():
+                continue
+            part = smaller[y0:y1, x0:x1]
+            best = None
+            for a in range(-r, r + 1):
+                for b in range(-r, r + 1):
+                    lost = (_difference(padded[y0 + r - a:y1 + r - a, x0 + r - b:x1 + r - b], part) >= INK_DELTA) & marks
+                    n = int(lost.sum())
+                    if best is None or n < best[0]:
+                        best = (n, lost)
+                    if n == 0:
+                        break
+                if best[0] == 0:
+                    break
+            far[y0:y1, x0:x1] = best[1]
+    return far
+
+
+def _word_sized(lost: np.ndarray) -> bool:
+    """A word's worth missing in one place, not specks: noise is scattered, a
+    title that changed is a cluster."""
+    if lost.sum() < LOST_WORD:
+        return False
+    return any(lost[y0:y1, x0:x1].sum() >= LOST_WORD for y0, y1, x0, x1 in _blobs(_grow(lost, 1)))
+
+
+def _sharp(bigger: np.ndarray, smaller: np.ndarray, match: tuple) -> bool:
+    """`covers`, looked at again at FINE_SIZE, where letters are letters: with
+    the same area left out, each region lined up to the pixel, and a
+    word-sized loss (in thin strokes: shading on filmed paper shifts with the
+    camera's exposure) counted as a loss."""
+    dy, dx, skip = match
+    ink = ink_mask(smaller)
+    if skip is not None:
+        ink &= ~(np.asarray(Image.fromarray(skip.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127)
+    marks = int(ink.sum())
+    if marks < BLANK_INK * ink.size:
+        return True
+    writing = strokes(smaller) & ink
+    scale = FINE_SIZE[0] // THUMB_SIZE[0]
+    moved = _shifted(bigger, dy * scale, dx * scale, -1000) if (dy or dx) else bigger
+    far = _far_by_region(moved, smaller, ink)
+    lost = int(far.sum())
+    return lost <= (1 - KEEP_TO_CONTAIN) * marks and lost <= LOST_OF_IMAGE * ink.size and not _word_sized(far & writing)
 
 
 def unpack_moving(packed: str | None) -> np.ndarray | None:
@@ -329,6 +540,11 @@ class Session:
             frames_dir = self.root / "frames"
             frames_dir.mkdir(exist_ok=True)
             moving = self._presenter(frames_dir, moving)
+            if frames and hand_area(thumb) is not None and writing(thumb) < HAND_MIN_WRITING * thumb[..., 0].size:
+                # The hand over the page and hardly anything written to see: adds nothing.
+                nearest = min(frames, key=lambda f: abs(f["t_last"] - t))
+                return {**nearest, "duplicate": True, "kept": False}
+            new_fine = None
             # Nearest in time first: the slide being built is almost always the last one.
             for frame in sorted(frames, key=lambda f: abs(f["t_last"] - t)):
                 if abs(frame["t_last"] - t) > 900:
@@ -336,27 +552,41 @@ class Session:
                 other = self._thumb(frame)
                 if other is None:
                     continue
-                inside = contains(other, thumb, moving)
-                same = inside and contains(thumb, other, moving)
-                if same or (inside and self._part_of(frame, image, moving)):
-                    # Nothing the kept image lacks: the same slide seen again
-                    # (a rewatch) or part of a build. Only its times can widen.
-                    if same and (t < frame["t"] or t > frame["t_last"]):
+                inside = covers(other, thumb, moving)   # the kept picture shows all of this one
+                outside = covers(thumb, other, moving)  # this one shows all of the kept picture
+                if inside is None and outside is None:
+                    continue
+                # In the small picture text blurs into bars, and a different
+                # line of about the same length covers another's bar: "Risk"
+                # passed for "Rain", and a title-only slide for the next one.
+                # So what it says is checked at three times the size, where
+                # letters are letters. Only for a capture that matched.
+                kept_fine = self._fine(frame)
+                if kept_fine is not None:
+                    if new_fine is None:
+                        new_fine = _fine(image)
+                    inside = inside if inside is not None and _sharp(kept_fine, new_fine, inside) else None
+                    outside = outside if outside is not None and _sharp(new_fine, kept_fine, outside) else None
+                if inside is not None:
+                    # Nothing the kept picture lacks: the same slide seen again
+                    # (a rewatch) or part of a build. Unless this one shows more
+                    # of it: around a writer's hand nothing counts, so the newest
+                    # line, still under the pen, or a page no longer behind the
+                    # hand, arrives this way. Then it is the better picture.
+                    if shows_more(thumb, other):
+                        return self._replace(frames, frame, t, jpeg, image, thumb)
+                    if outside is not None and (t < frame["t"] or t > frame["t_last"]):
                         frame["t"] = min(frame["t"], t)
                         frame["t_last"] = max(frame["t_last"], t)
                         frames.sort(key=lambda f: f["t"])
                         self._write("frames.json", frames)
-                    return {**frame, "duplicate": True}
-                if contains(thumb, other, moving):
-                    (frames_dir / frame["file"]).write_bytes(jpeg)
-                    np.save(frames_dir / f"{frame['id']}.npy", thumb.astype(np.uint8))
-                    frame["t"] = min(frame["t"], t)
-                    frame["t_last"] = max(frame["t_last"], t)
-                    frame.update(w=image.width, h=image.height)
-                    frames.sort(key=lambda f: f["t"])
-                    self._write("frames.json", frames)
-                    self._bump()  # a fuller version of a kept slide
-                    return {**frame, "duplicate": True}
+                    return {**frame, "duplicate": True, "kept": False}
+                if outside is not None:
+                    if shows_more(other, thumb):
+                        # Everything the kept picture shows, but less of the page:
+                        # the hand is in the way. The kept picture stays.
+                        return {**frame, "duplicate": True, "kept": False}
+                    return self._replace(frames, frame, t, jpeg, image, thumb)
             # One past the highest id, not the count: after a clean-up removed
             # some, the count would hand out an id still in use.
             frame_id = f"S{max((int(f['id'][1:]) for f in frames), default=0) + 1:03d}"
@@ -368,24 +598,25 @@ class Session:
             frames.sort(key=lambda f: f["t"])
             self._write("frames.json", frames)
             self._bump()
-            return {**record, "duplicate": False}
+            return {**record, "duplicate": False, "kept": True}
 
-    def _part_of(self, frame: dict, image: Image.Image, moving: np.ndarray | None) -> bool:
-        """A second, sharper look before a capture is dropped as part of a
-        kept slide. In the small picture text blurs into bars, so a new,
-        shorter title over the same illustration can sit inside the old
-        title's bar and pass for part of that slide. At three times the size
-        the letters are letters. Only asked in that case, so it costs one
-        image read now and then."""
+    def _replace(self, frames: list[dict], frame: dict, t: float, jpeg: bytes,
+                 image: Image.Image, thumb: np.ndarray) -> dict:
+        """A fuller picture of a kept slide takes its place (and its id)."""
+        frames_dir = self.root / "frames"
+        (frames_dir / frame["file"]).write_bytes(jpeg)
+        np.save(frames_dir / f"{frame['id']}.npy", thumb.astype(np.uint8))
+        frame["t"] = min(frame["t"], t)
+        frame["t_last"] = max(frame["t_last"], t)
+        frame.update(w=image.width, h=image.height)
+        frames.sort(key=lambda f: f["t"])
+        self._write("frames.json", frames)
+        self._bump()  # a fuller version of a kept slide
+        return {**frame, "duplicate": True, "kept": True}
+
+    def _fine(self, frame: dict) -> np.ndarray | None:
         path = self.root / "frames" / frame["file"]
-        if not path.exists():
-            return True
-        kept = np.asarray(Image.open(path).convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
-        new = np.asarray(image.convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
-        ignore = None
-        if moving is not None:
-            ignore = np.asarray(Image.fromarray(moving.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127
-        return contains(kept, new, ignore)
+        return _fine(Image.open(path)) if path.exists() else None
 
     def _presenter(self, frames_dir: Path, moving: np.ndarray | None) -> np.ndarray | None:
         """What to leave out of comparisons: where the presenter moves now,

@@ -33,6 +33,12 @@ Written down so they are not rediscovered the hard way.
   about a year.
 
 ## Quality
+- **Lectures written by hand on paper** (a hand and pen filmed from above) keep
+  one picture per distinct state of the page: the hand, its pen and its shadow
+  are left out of comparisons, a page nudged while writing is lined up again,
+  and a capture that shows writing no other capture shows is always kept. A 10
+  minute handwritten lecture kept 47 captures before 2.10.1 and keeps about 15
+  now; a page taller than the frame keeps a view of each part of it.
 - **Whisper base.en mishears technical words** ("weights must sound to one").
   The composer corrects most of it from the slides and context. `small.en`
   (`./scripts/setup.sh --whisper-model`) is noticeably better.

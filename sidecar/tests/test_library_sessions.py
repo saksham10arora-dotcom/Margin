@@ -337,8 +337,13 @@ def test_a_head_moving_past_the_patch_the_browser_saw_is_still_one_slide(tmp_pat
 
 def test_clean_up_refolds_old_captures_without_reusing_ids(tmp_path):
     s = open_session(UDEMY, root=tmp_path)
-    for i, t in enumerate((10, 20, 30)):  # an older Margin kept every one of these
-        s.add_frame(t, _two_panel("Closed-Source Frontier", ["GPT"], i))
+    # An older Margin kept every one of these (today they fold as they arrive),
+    # so they are written the way it stored them.
+    (s.root / "frames").mkdir()
+    for i, t in enumerate((10, 20, 30)):
+        (s.root / "frames" / f"S00{i + 1}.jpg").write_bytes(_two_panel("Closed-Source Frontier", ["GPT"], i))
+    s._write("frames.json", [{"id": f"S00{i + 1}", "t": t, "t_last": t, "file": f"S00{i + 1}.jpg", "w": 1280, "h": 720}
+                             for i, t in enumerate((10, 20, 30))])
     assert len(s.frames) == 3
     np.save(s.root / "frames" / "moving.npy", _face_mask())
     report = s.compact_frames()
@@ -348,3 +353,125 @@ def test_clean_up_refolds_old_captures_without_reusing_ids(tmp_path):
     assert [(f["id"], f["t"], f["t_last"]) for f in s.frames] == [("S004", 10, 30)]
     assert sorted(p.name for p in (s.root / "frames").glob("S*")) == ["S004.jpg", "S004.npy"]
     assert s.frame_bytes("S004")
+
+
+# --- a hand writing on paper, filmed from above ---------------------------------
+
+PAGE = ["Algorithm: a step by step process", "input: values from a set", "output: one for each input",
+        "precision: every step is defined", "finiteness: stops after n steps"]
+SKIN = (150, 110, 82)  # the writer's hand as the camera saw it on a real lecture
+
+
+def _paper(lines, hand=None, shift=(0, 0)) -> bytes:
+    """A page filmed from above: grey-white paper, pen-thin text in blue and
+    red, and the writer's hand (with its pen) reaching in from the bottom edge."""
+    img = Image.new("RGB", (1280, 720), (196, 194, 196))
+    d = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        d.text((160 + shift[1], 80 + i * 100 + shift[0]), line,
+               fill=(40, 70, 170) if i % 2 == 0 else (190, 40, 50), font=_font(44))
+    if hand is not None:
+        x, y = hand
+        d.ellipse([x - 130, y - 100, x + 130, y + 420], fill=SKIN)
+        d.line([x - 30, y - 90, x - 110, y - 220], fill=(30, 60, 160), width=12)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
+def test_a_page_written_by_hand_is_one_capture_whatever_the_hand_covers(tmp_path):
+    # The hand counted as ink: every capture had some the next one lacked, and
+    # hid writing the last one had, so a 10 minute lecture kept 47 captures.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE[:2], hand=(700, 330)))
+    s.add_frame(20, _paper(PAGE[:3], hand=(420, 430)))
+    s.add_frame(30, _paper(PAGE, hand=(960, 560)))
+    s.add_frame(35, _paper(PAGE))
+    assert [(f["t"], f["t_last"]) for f in s.frames] == [(10, 35)]
+
+
+def test_a_page_nudged_while_writing_is_still_the_same_page(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE[:3]))
+    s.add_frame(20, _paper(PAGE[:4], shift=(40, 24)))  # the paper slid a little, and a line was added
+    assert len(s.frames) == 1
+    assert s.frame_bytes(s.frames[0]["id"]) == _paper(PAGE[:4], shift=(40, 24))
+
+
+def test_two_pages_written_by_hand_stay_two(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE[:3], hand=(700, 420)))
+    s.add_frame(40, _paper(["Properties of an algorithm", "input and output", "definiteness"], hand=(520, 460)))
+    s.add_frame(50, _paper(["Pseudo code", "flow chart", "programming language"], shift=(30, 10)))
+    assert [f["t"] for f in s.frames] == [10, 40, 50]
+
+
+def test_a_skin_toned_picture_does_not_hide_a_new_title(tmp_path):
+    # What the hand rule must not do on slides: a photo of a person at the
+    # frame's edge is left out of the comparison, the titles still count.
+    def slide(title):
+        img = Image.open(io.BytesIO(_slide(title, A[:1])))
+        ImageDraw.Draw(img).ellipse([900, 380, 1300, 900], fill=SKIN)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=88)
+        return buf.getvalue()
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, slide("Expected return"))
+    s.add_frame(40, slide("Portfolio risk"))
+    assert [f["t"] for f in s.frames] == [10, 40]
+
+
+def test_of_two_captures_of_a_page_the_one_showing_more_writing_is_kept(tmp_path):
+    # Around the hand and its pen nothing counts, so a capture whose newest
+    # line is still under the pen folds into an older one: the picture kept
+    # must be whichever shows more of the page, or the note loses that line.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE, hand=(520, 300)))  # the hand over the middle of the page
+    s.add_frame(20, _paper(PAGE))                   # the same page, nothing in the way
+    s.add_frame(30, _paper(PAGE, hand=(700, 330)))  # the hand back: must not win
+    assert len(s.frames) == 1
+    assert s.frame_bytes(s.frames[0]["id"]) == _paper(PAGE)
+
+
+def test_a_capture_hidden_by_what_is_left_out_is_part_of_nothing():
+    # Only a blank screen is "contained in anything". A page that looks empty
+    # because a hand (or a face bubble) covers it is not blank: two different
+    # pages, each mostly under the hand, were folded together this way.
+    from sidecar.sessions import covers, grey_thumb
+    a = grey_thumb(Image.open(io.BytesIO(_slide("Expected return", A))))
+    b = grey_thumb(Image.open(io.BytesIO(_slide("Portfolio risk", B))))
+    assert covers(b, a, np.ones(a.shape[:2], dtype=bool)) is None
+
+
+def test_a_capture_of_the_hand_over_a_blank_page_adds_nothing(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE))
+    assert s.add_frame(20, _paper([], hand=(640, 330)))["duplicate"]
+    assert len(s.frames) == 1 and s.frame_bytes(s.frames[0]["id"]) == _paper(PAGE)
+
+
+def test_a_page_mostly_under_the_hand_is_not_taken_over_by_the_next_page(tmp_path):
+    # Two captures, each mostly hand, leave a few pixels of writing to compare,
+    # and those few can line up by chance: page 2 took page 1's picture slot
+    # and its time (0:25 on a page written at 5:06).
+    s = open_session(UDEMY, root=tmp_path)
+    first = _paper(["Algorithm"], hand=(420, 300))
+    s.add_frame(25, first)
+    s.add_frame(306, _paper(["Properties", "input: values"], hand=(560, 300)))
+    assert s.frame_bytes(s.frames[0]["id"]) == first and s.frames[0]["t"] == 25
+
+
+def test_a_longer_title_does_not_swallow_a_shorter_one(tmp_path):
+    # In the small picture a line of text is a bar, and a longer line covers a
+    # shorter one's bar whatever it says: "Risk" was folded into the next slide.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _slide("Risk", []))
+    s.add_frame(40, _slide("Returns and more", A[:1]))
+    assert [f["t"] for f in s.frames] == [10, 40]
+
+
+def test_titles_of_the_same_length_are_still_different_slides(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _slide("Risk", A))
+    s.add_frame(40, _slide("Rain", A))
+    assert [f["t"] for f in s.frames] == [10, 40]

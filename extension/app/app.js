@@ -333,10 +333,15 @@ class MarginApp {
           const job = this.onAudio(blob, start, end, rate).finally(() => this.audioInFlight.delete(job));
           this.audioInFlight.add(job);
         },
+        // The sound can arrive a moment after capture starts; until then, and
+        // if it never does, the panel says what is true.
+        onState: (state) => {
+          if (state === 'listening') this.panel.setSpeech('Listening · Whisper on this Mac', 'live');
+          else this.panel.setSpeech('No captions · no sound from this video', 'off');
+        },
       });
       try {
         this.recorder.start();
-        this.panel.setSpeech('Listening · Whisper on this Mac', 'live');
       } catch (e) {
         this.recorder = null;
         this.speech = 'none';
@@ -367,9 +372,12 @@ class MarginApp {
   onFrameSaved(session, res, t, dataUrl) {
     if (!res.ok || session !== this.session) return;
     this.noteStale(res);
-    const { id } = res.data;
+    const { id, kept } = res.data;
+    // Folded into a slide already shown and not its better picture (the hand
+    // was in the way): the card keeps the picture Margin kept.
+    const img = kept === false && this.frames.has(id) ? undefined : dataUrl;
     this.frames.set(id, Math.min(this.frames.get(id) ?? t, t));
-    this.panel.addCard({ id, t: this.frames.get(id), img: dataUrl });
+    this.panel.addCard({ id, t: this.frames.get(id), img });
     this.refreshCardTexts();
     this.panel.setSlides(this.frames.size);
     this.refreshControls();

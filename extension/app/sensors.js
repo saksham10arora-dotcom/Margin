@@ -182,11 +182,16 @@ export function visibleVideoRect(video, exclude) {
 
 // --- audio -------------------------------------------------------------------
 
+// A video playing this long with no sound to record has none to give (or its
+// site keeps it from Margin): only then does the panel say so.
+const NO_AUDIO_MS = 10000;
+
 export class AudioRecorder {
-  constructor(video, { onSegment, segmentSec = 20, isBlocked }) {
+  constructor(video, { onSegment, segmentSec = 20, isBlocked, onState }) {
     this.video = video;
     this.isBlocked = isBlocked || (() => false);
     this.onSegment = onSegment;
+    this.onState = onState || (() => {});
     this.segmentSec = segmentSec;
     this.track = null;
     this.rec = null;
@@ -200,9 +205,13 @@ export class AudioRecorder {
 
   start() {
     const stream = this.video.captureStream();
-    const [track] = stream.getAudioTracks();
-    if (!track) throw new Error('This video exposes no audio track to record.');
-    this.track = track;
+    // Players that stream through JavaScript (YouTube, hls.js) attach the
+    // sound a moment after loading starts: asked for before that, the stream
+    // has no audio track yet and gains one. Giving up then showed "audio
+    // blocked" for a whole lecture whose sound was there all along.
+    const onTrack = (e) => { if (e.track?.kind === 'audio' && !this.track) this.useTrack(e.track); };
+    stream.addEventListener('addtrack', onTrack);
+    this.dropStream = () => stream.removeEventListener('addtrack', onTrack);
     const on = (ev, fn) => { this.video.addEventListener(ev, fn); this.listeners.push([ev, fn]); };
     on('timeupdate', () => { if (!this.video.seeking) this.lastTime = this.video.currentTime; });
     on('play', () => this.begin());
@@ -211,17 +220,38 @@ export class AudioRecorder {
     on('seeked', () => { this.lastTime = this.video.currentTime; if (!this.video.paused) this.begin(); });
     on('ratechange', () => { this.end(); if (!this.video.paused) this.begin(); });
     on('ended', () => this.end());
+    const [track] = stream.getAudioTracks();
+    if (track) this.useTrack(track);
+    else if (!this.video.paused) this.expectAudio();
+  }
+
+  useTrack(track) {
+    this.track = track;
+    clearTimeout(this.noAudioTimer);
+    this.onState('listening');
     if (!this.video.paused) this.begin();
+  }
+
+  /** Playing with no sound yet: wait for it, and only after a while say so. */
+  expectAudio() {
+    if (this.noAudioTimer) return;
+    this.noAudioTimer = setTimeout(() => {
+      this.noAudioTimer = null;
+      if (!this.track && !this.video.paused) this.onState('no-audio');
+    }, NO_AUDIO_MS);
   }
 
   stop() {
     this.end();
+    clearTimeout(this.noAudioTimer);
+    this.dropStream?.();
     for (const [ev, fn] of this.listeners) this.video.removeEventListener(ev, fn);
     this.listeners = [];
   }
 
   begin() {
-    if (this.rec || !this.track || this.track.readyState === 'ended' || this.isBlocked()) return;
+    if (!this.track) return this.expectAudio();
+    if (this.rec || this.track.readyState === 'ended' || this.isBlocked()) return;
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
     const rec = new MediaRecorder(new MediaStream([this.track]), { mimeType: mime });
     const seg = { start: this.video.currentTime, rate: this.video.playbackRate, chunks: [], mime, end: null };
