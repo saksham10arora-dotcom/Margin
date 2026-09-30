@@ -49,7 +49,24 @@ APPLESCRIPT
 
 case "${1:-status}" in
   install)
-    VAULT="${MARGIN_VAULT_PATH:-$HOME/MarginNotes}"
+    # The notes folder: as given, else the one you chose in install.sh, else the
+    # one the running sidecar uses, so re-installing never moves your notes.
+    VAULT="${MARGIN_VAULT_PATH:-}"
+    [ -n "$VAULT" ] || VAULT="$(cat "$HOME/.margin/notes-folder" 2>/dev/null || true)"
+    [ -n "$VAULT" ] || VAULT="$(curl -s --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null \
+      | python3 -c 'import sys, json; print(json.load(sys.stdin).get("vault") or "")' 2>/dev/null || true)"
+    [ -n "$VAULT" ] || VAULT="$HOME/MarginNotes"
+    # A sidecar already running keeps serving the code it started with, and the
+    # login item only starts one when none answers: stop it, so the one started
+    # below is this version. A note it was writing is picked up again on start.
+    if curl -s --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"vault"'; then
+      OLD=$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)
+      if [ -n "$OLD" ]; then
+        echo "Stopping the running sidecar ($OLD), so this version starts."
+        kill $OLD 2>/dev/null || true
+        sleep 2
+      fi
+    fi
     build_app "$VAULT"
     mkdir -p "$HOME/Library/LaunchAgents"
     cat >"$PLIST" <<PLIST

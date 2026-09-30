@@ -104,7 +104,8 @@ transcribes the audio on your Mac. Installed them later? `./scripts/setup.sh --w
 
 1. Download the new zip from [Releases](https://github.com/saksham10arora-dotcom/Margin/releases/latest)
    and unzip it over your Margin folder.
-2. Run `./install.sh` again. It offers the notes folder you already use, and keeps your keys and model order.
+2. Run `./install.sh` again. It offers the notes folder you already use, keeps your keys and model
+   order, and restarts Margin's helper so the new version is the one running.
 3. Reload Margin in `chrome://extensions` (the circular arrow on its card).
 
 Margin does not update itself, so watch the repo's releases if you want to hear about new ones.

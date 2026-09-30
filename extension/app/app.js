@@ -140,7 +140,8 @@ class MarginApp {
     this.panel.showSetup(this.health.setup_ready === false);
     if (older(this.health.version, MIN_SIDECAR) && !this.warnedVersion) {
       this.warnedVersion = true;
-      this.panel.toast('Your Margin sidecar is out of date. Restart it (quit it, or log out and back in).', 9000);
+      this.panel.toast('Margin\'s sidecar is older than this extension: run ./install.sh in the Margin folder again, '
+        + 'or log out and back in.', 10000);
     }
     return true;
   }
