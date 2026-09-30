@@ -1,7 +1,7 @@
 # Margin
 
 **Watch a lecture. Get the notes.** Margin sits beside the video on Udemy, Coursera,
-YouTube or any page with a video, keeps the lecture's own slides as they finish
+DeepLearning.AI, YouTube or any page with a video, keeps the lecture's own slides as they finish
 building, follows what is said, and when the lecture ends writes a study note
 into your Obsidian vault: the intuition first, the lecture's slides, diagrams,
 formulas, questions to test yourself, and the lecture's code in a course
@@ -39,8 +39,8 @@ the note (with the lecture's own diagram next to one it drew), its crux, flashca
 - **One note, however you watch.** Start in the middle, reload, skip, rewatch:
   it all builds one record, and a later watch that catches something new rewrites
   the same note. Edits you make in Obsidian are never overwritten on Margin's own.
-- **Lectures you finished before Margin** get notes from their captions, one
-  click in the Course tab.
+- **Lectures you finished before Margin** (on Udemy or DeepLearning.AI) get notes
+  from their captions, one click in the Course tab.
 - **The crux, the 80/20.** Its own tab: the one idea the lecture exists to teach,
   the three to six that matter most, what to remember, and the line to keep if you
   forget everything else. Written with the note, and folded into it in your vault.
@@ -131,7 +131,7 @@ dropdown marks them "text only".
 
 ## Where it works
 
-- **Udemy and Coursera:** capture starts by itself when a lecture plays.
+- **Udemy, Coursera and DeepLearning.AI:** capture starts by itself when a lecture plays.
 - **YouTube:** Margin stays a small tab until you press **Capture this lecture**.
   Nothing about a video is stored before that, so your entertainment stays yours.
 - **Anything else with a video:** the toolbar button or `Alt+Shift+M`.

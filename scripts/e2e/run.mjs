@@ -178,7 +178,10 @@ try {
 
   // Capture, then play at 2x to the end.
   const playing = record ? await page.screencast({ path: path.join(outDir, 'rec-play.webm'), ffmpegPath: FFMPEG }) : null;
-  await shadow("r.getElementById('primary').click(); return true;");
+  // Opt-in sites (YouTube, the generated lecture) wait for Capture. Course
+  // sites capture as soon as the lecture plays; their button already says
+  // "Write notes now", which must not be pressed yet.
+  await shadow("const b = r.getElementById('primary'); if (/Capture/.test(b.textContent)) b.click(); return true;");
   await page.evaluate(() => { const v = document.querySelector('video'); v.playbackRate = 2; v.play(); });
   const duration = await page.evaluate(() => document.querySelector('video').duration);
   const target = isUrl ? Math.min(playSeconds, duration) : duration;
@@ -207,7 +210,11 @@ try {
   await shot(page, path.join(outDir, '1-live.png'));
 
   const key = isUrl
-    ? await page.evaluate(() => `youtube-solo-${new URLSearchParams(location.search).get('v')}`)
+    ? await page.evaluate(() => {
+      const dlai = location.pathname.match(/^\/courses\/([^/]+)\/lesson\/([^/]+)/);
+      if (dlai) return `deeplearning-${dlai[1]}-${dlai[2]}`;
+      return `youtube-solo-${new URLSearchParams(location.search).get('v')}`;
+    })
     : `web-solo-localhost_${PAGE_PORT}_index.html`;
   results.session = await sidecar(`/session/${key}`);
   if (!noCompose) {

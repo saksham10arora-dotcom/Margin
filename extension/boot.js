@@ -39,7 +39,7 @@
 
   let app = null;
   let closedOn = null;
-  // The lecture you are on: Udemy and YouTube change it without a reload.
+  // The lecture you are on: Udemy, YouTube and DeepLearning.AI change it without a reload.
   const page = () => location.pathname + location.search;
   let opening = null;
   let retired = false;
@@ -71,6 +71,7 @@
     const host = location.hostname;
     if (/(^|\.)udemy\.com$/.test(host)) return /\/learn\/lecture\//.test(location.pathname);
     if (/(^|\.)coursera\.org$/.test(host)) return /\/lecture\//.test(location.pathname);
+    if (/(^|\.)deeplearning\.ai$/.test(host)) return /^\/courses\/[^/]+\/lesson\//.test(location.pathname);
     if (/(^|\.)youtube\.com$/.test(host)) return location.pathname === '/watch';
     return false;
   };

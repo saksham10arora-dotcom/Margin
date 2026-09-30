@@ -265,6 +265,7 @@ export class Panel {
   // --- header + signals -----------------------------------------------------------
 
   setLecture(meta) {
+    this.platform = meta.platform;
     const crumbs = [meta.course_title, meta.section_title && (meta.section_index ? `§${meta.section_index} ${meta.section_title}` : meta.section_title)]
       .filter(Boolean).join('  ·  ');
     this.$('crumbs').textContent = crumbs || platformName(meta.platform);
@@ -663,7 +664,7 @@ export class Panel {
     box.hidden = false;
     const s = count === 1 ? '' : 's';
     this.$('backfill-text').textContent = busy
-      || `${count} lecture${s} you finished on Udemy ${count === 1 ? 'has' : 'have'} no notes. Margin can write `
+      || `${count} lecture${s} you finished on ${platformName(this.platform)} ${count === 1 ? 'has' : 'have'} no notes. Margin can write `
        + `${count === 1 ? 'it' : 'them'} from the captions, one at a time. Slides come in if you watch one with Margin later.`;
     const go = this.$('backfill-go');
     go.hidden = Boolean(busy);
@@ -708,7 +709,8 @@ export class Panel {
 }
 
 function platformName(p) {
-  return { youtube: 'YouTube', udemy: 'Udemy', coursera: 'Coursera', local: 'Local video' }[p] || 'Web video';
+  return { youtube: 'YouTube', udemy: 'Udemy', coursera: 'Coursera', deeplearning: 'DeepLearning.AI', local: 'Local video' }[p]
+    || 'Web video';
 }
 
 /** pandas renders DataFrames as HTML; keep the table, drop everything else. */

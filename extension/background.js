@@ -103,7 +103,7 @@ async function captureTab(sender) {
 
 // Only caption files from the platforms Margin knows, not arbitrary URLs a
 // page might ask this privileged context to fetch on its behalf.
-const CAPTION_HOSTS = /(^|\.)(udemycdn\.com|udemy\.com|coursera\.org|cloudfront\.net)$/;
+const CAPTION_HOSTS = /(^|\.)(udemycdn\.com|udemy\.com|coursera\.org|cloudfront\.net|deeplearning\.ai)$/;
 async function fetchCaptionText(url) {
   let parsed;
   try { parsed = new URL(url); } catch { return { ok: false }; }

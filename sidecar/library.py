@@ -32,6 +32,7 @@ PLATFORM_FOLDERS = {
     "youtube": "YouTube",
     "udemy": "Udemy",
     "coursera": "Coursera",
+    "deeplearning": "DeepLearning.AI",
     "local": "Local videos",
 }
 

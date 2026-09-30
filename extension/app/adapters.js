@@ -18,6 +18,7 @@ export function detectPlatform(loc = location) {
   if (/(^|\.)youtube\.com$/.test(host)) return 'youtube';
   if (/(^|\.)udemy\.com$/.test(host)) return 'udemy';
   if (/(^|\.)coursera\.org$/.test(host)) return 'coursera';
+  if (/(^|\.)deeplearning\.ai$/.test(host)) return 'deeplearning';
   if (loc.protocol === 'file:') return 'local';
   return 'web';
 }
@@ -285,6 +286,141 @@ const udemy = {
   },
 };
 
+// --- DeepLearning.AI -----------------------------------------------------------
+//
+// Lessons live at learn.deeplearning.ai/courses/<course>/lesson/<lesson>/<name>.
+// The site's own API (the tRPC calls its pages make) gives the course with its
+// modules and lessons, and each video's caption files. The page only has the
+// course as it was when it loaded, and it moves between lessons without
+// reloading, so Margin asks the API rather than reading the page.
+
+const dlaiCourses = new Map(); // course slug -> Promise<course>
+
+async function dlaiApi(name, input) {
+  const query = encodeURIComponent(JSON.stringify({ json: input }));
+  const r = await fetch(`/api/trpc/${name}?input=${query}`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`DeepLearning.AI API ${r.status}`);
+  return (await r.json())?.result?.data?.json ?? null;
+}
+
+function loadDlaiCourse(slug) {
+  if (!dlaiCourses.has(slug)) {
+    dlaiCourses.set(slug, dlaiApi('course.getCourseBySlug', { courseSlug: slug }).catch((e) => {
+      dlaiCourses.delete(slug); // retry next time rather than caching a failure
+      throw e;
+    }));
+  }
+  return dlaiCourses.get(slug);
+}
+
+export function dlaiPath(pathname) {
+  const m = pathname.match(/^\/courses\/([^/]+)\/lesson\/([^/]+)/);
+  return m ? { course: m[1], lesson: m[2] } : null;
+}
+
+// Videos, and videos with a notebook beside them; not notebooks, quizzes or readings.
+const isDlaiVideo = (lesson) => /video/.test(lesson?.type || '');
+
+export function dlaiLessonMeta(course, courseSlug, lessonSlug) {
+  const lesson = course?.lessons?.[lessonSlug];
+  const modules = course?.listing || [];
+  const at = modules.findIndex((m) => (m.content || []).some((c) => c.key === lessonSlug));
+  // A short course is one module: no section, as there is nothing to divide.
+  const mod = modules.length > 1 && at >= 0 ? modules[at] : null;
+  // Any last part works in the address; the site uses the name, lowercased.
+  const name = (lesson?.name || 'lesson').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const partners = (course?.wpData?.coursePartner || []).map((p) => p.title).filter(Boolean);
+  return {
+    platform: 'deeplearning', course_id: courseSlug, lecture_id: lessonSlug,
+    course_title: course?.name ?? null,
+    lecture_title: lesson?.name ?? null,
+    lecture_index: lesson?.index ?? null,
+    section_title: mod ? (mod.name || mod.moduleLabel || null) : null,
+    section_index: mod ? at + 1 : null,
+    duration_sec: lesson?.time ?? null,
+    url: `https://learn.deeplearning.ai/courses/${courseSlug}/lesson/${lessonSlug}/${name}`,
+    author: partners.join(', ') || null,
+  };
+}
+
+/** Videos the site counts as finished (progress 100), in course order. */
+export function dlaiFinished(course, courseSlug) {
+  return Object.values(course?.lessons || {})
+    .filter((l) => isDlaiVideo(l) && l.progress === 100)
+    .sort((a, b) => a.index - b.index)
+    .map((l) => dlaiLessonMeta(course, courseSlug, l.slug));
+}
+
+/** A video's caption files: its `subtitle` is JSON, {"en-us": {"URI", "NAME"}, ...}. */
+export function dlaiTracks(subtitle) {
+  let subs;
+  try {
+    subs = typeof subtitle === 'string' ? JSON.parse(subtitle) : subtitle;
+  } catch {
+    return [];
+  }
+  return Object.entries(subs || {})
+    .map(([locale, t]) => ({ locale, source: 'manual', url: t?.URI, label: t?.NAME }))
+    .filter((t) => /^https:\/\//.test(t.url || ''));
+}
+
+const deeplearning = {
+  lectureKey: () => {
+    const at = dlaiPath(location.pathname);
+    return at ? `${at.course}/${at.lesson}` : null;
+  },
+
+  async finishedLectures() {
+    const at = dlaiPath(location.pathname);
+    if (!at) return [];
+    return dlaiFinished(await loadDlaiCourse(at.course), at.course);
+  },
+
+  async lectureInfo(video) {
+    const at = dlaiPath(location.pathname);
+    const base = {
+      platform: 'deeplearning', course_id: at?.course ?? null, lecture_id: at?.lesson ?? null,
+      url: location.href.split('#')[0].split('?')[0],
+      duration_sec: video && Number.isFinite(video.duration) ? Math.round(video.duration) : null,
+    };
+    const fallback = { ...base, lecture_title: clean(document.title.replace(/ - DeepLearning\.AI$/, '')) };
+    if (!at) return fallback;
+    try {
+      const meta = dlaiLessonMeta(await loadDlaiCourse(at.course), at.course, at.lesson);
+      return { ...meta, url: base.url, duration_sec: base.duration_sec ?? meta.duration_sec };
+    } catch {
+      return fallback;
+    }
+  },
+
+  async captions(meta, bridge) {
+    const course = await loadDlaiCourse(meta.course_id);
+    const videoId = course?.lessons?.[meta.lecture_id]?.videoId;
+    if (!videoId) return null;
+    const video = (await dlaiApi('course.getLessonVideo', { videoId }))?.video;
+    const pick = pickCaption(dlaiTracks(video?.subtitle));
+    if (pick) {
+      let text = null;
+      try {
+        const r = await fetch(pick.url);
+        text = r.ok ? await r.text() : null;
+      } catch { /* the background worker tries below */ }
+      if (!text) {
+        const res = await bridge.send({ type: 'fetch-text', url: pick.url });
+        text = res?.ok ? res.text : null;
+      }
+      const cues = text ? parseVtt(text) : [];
+      if (cues.length) return { cues, source: 'deeplearning-captions', language: pick.locale };
+    }
+    // No caption file: the site's own transcript, timed to the whole second.
+    const subs = await dlaiApi('course.getLessonVideoSubtitle', { videoId });
+    const cues = (subs?.captions || [])
+      .map((c) => ({ start: c.startInSeconds, end: c.endInSeconds, text: clean(c.text) }))
+      .filter((c) => c.text && Number.isFinite(c.start));
+    return cues.length ? { cues, source: 'deeplearning-captions', language: 'en' } : null;
+  },
+};
+
 // --- Anything else with a <video> ---------------------------------------------
 
 /** Cues from the player's own <track> elements (Coursera, most HTML5 players). */
@@ -329,5 +465,6 @@ const generic = {
 export function adapterFor(platform) {
   if (platform === 'youtube') return youtube;
   if (platform === 'udemy') return udemy;
+  if (platform === 'deeplearning') return deeplearning;
   return generic;
 }

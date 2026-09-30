@@ -13,6 +13,15 @@ Written down so they are not rediscovered the hard way.
 - Gemini 3.5 Flash overloaded for minutes: the note came from the next model.
 - The curriculum (218 items) arrives in one page; resources are read from it.
 
+## Verified on a real course (DeepLearning.AI, ChatGPT Prompt Engineering, 2026-10-01)
+- Lesson 1, opened at `#t=40` from a link: Margin jumped there (the player
+  ignores `#t=` itself), took the English captions from the lesson's caption
+  file, captured the slide from the video, and wrote the note, crux and quiz
+  into the course's folder.
+- Signed out, only a course's first lesson plays, so moving between lessons and
+  notes for lessons you finished (progress 100) are covered by tests, not yet by
+  a signed-in run.
+
 ## Known gaps
 - **Reloading the extension** can lose up to ten seconds of watched time: the
   old copy's last report cannot reach the sidecar once Chrome has cut it off.

@@ -18,7 +18,7 @@ import { coverage, engineName, mergeRanges, shouldAutoCompose, textBetween } fro
 // Course platforms are captured the moment a lecture plays. YouTube and the
 // open web are opt-in per video: most of what people watch there is not a
 // lecture, and capturing a music video helps nobody.
-const CAPTURE_BY_DEFAULT = { udemy: true, coursera: true, local: true, youtube: false, web: false };
+const CAPTURE_BY_DEFAULT = { udemy: true, coursera: true, deeplearning: true, local: true, youtube: false, web: false };
 
 // The sidecar is long-running, so it can be older than a freshly reloaded
 // extension. Below this, features the extension relies on are missing.
@@ -36,6 +36,7 @@ const SPEECH_LABEL = {
   'udemy-captions': 'Udemy CC',
   'udemy-auto-captions': 'Udemy auto CC',
   'youtube-captions': 'YouTube CC',
+  'deeplearning-captions': 'DeepLearning.AI CC',
   'page-captions': 'Player CC',
 };
 
@@ -179,6 +180,10 @@ class MarginApp {
 
     // The duration is often unknown for the first moments of a load.
     for (let i = 0; i < 20 && !Number.isFinite(video.duration); i++) await sleep(250);
+    // A note's timestamp opens the lecture at #t=<seconds>. Players that stream
+    // through JavaScript (DeepLearning.AI) ignore it, so Margin makes the jump.
+    const jump = Number(location.hash.match(/^#t=(\d+)/)?.[1]);
+    if (jump && video.currentTime < 1) video.currentTime = jump;
     const meta = await this.adapter.lectureInfo(video);
     if (token !== this.switchToken) return; // superseded by a faster navigation
     this.meta = meta;
