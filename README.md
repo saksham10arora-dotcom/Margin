@@ -7,7 +7,10 @@ into your Obsidian vault: the intuition first, the lecture's slides, diagrams,
 formulas, questions to test yourself, and the lecture's code in a course
 notebook, already run.
 
-![Margin writing notes beside a lecture](docs/notes.png)
+![A lecture playing while Margin keeps its slides, then the note it wrote and the code, run](docs/demo.gif)
+
+<sub>A real run, sped up: a short lecture plays, Margin keeps each slide as it finishes building, then writes
+the note (with the lecture's own diagram next to one it drew) and runs the code.</sub>
 
 **[Download](https://github.com/saksham10arora-dotcom/Margin/releases/latest)** ·
 [saksham.digital/margin](https://saksham.digital/margin) · macOS first; Linux works with `start.sh`
@@ -45,6 +48,9 @@ notebook, already run.
 
 ## How it looks
 
+Every picture here is from one run on *How RAG works*, a short demo lecture made for them
+(`scripts/e2e/make_lecture.py --demo`), so no one's course is in this README.
+
 | While you watch | The note |
 |---|---|
 | ![Slides captured as they finish building](docs/live.png) | ![A diagram and the lecture's slide in the note](docs/notes-diagram.png) |
@@ -81,6 +87,15 @@ And a settings page for keys, subscriptions and local models:
 Needs Chrome (or Edge, Brave, Arc) and Python 3.11+ (the installer tells you how to
 get it). For lectures without captions, also `brew install ffmpeg whisper-cpp`:
 Margin then transcribes the audio on your Mac.
+
+## Updating
+
+1. Download the new zip from [Releases](https://github.com/saksham10arora-dotcom/Margin/releases/latest)
+   and unzip it over your Margin folder.
+2. Run `./install.sh` again. It offers the notes folder you already use, and keeps your keys and model order.
+3. Reload Margin in `chrome://extensions` (the circular arrow on its card).
+
+Margin does not update itself, so watch the repo's releases if you want to hear about new ones.
 
 ## Choosing models
 
@@ -142,6 +157,9 @@ everything in your vault. See [ISSUES.md](ISSUES.md) for known limits.
   by a Lite fallback is rewritten by a full model later on its own.
 - **After updating**: reload Margin in `chrome://extensions`; open lecture tabs pick
   it up by themselves.
+- **Dozens of near-identical slides for one lecture** (captured before 2.8.1, when a lecturer's
+  moving head counted as a change): from the Margin folder, `venv/bin/python -m sidecar.sessions`
+  shows what a clean-up would keep, and adding `--apply` does it. Notes already written keep their pictures.
 
 ## Configuration
 
@@ -163,6 +181,14 @@ node scripts/e2e/run.mjs <lecture> <out>         # a whole lecture in a real bro
 node scripts/e2e/resilience.mjs <lecture>        # extension reload and sidecar outage mid-lecture
 node scripts/e2e/model-menu.mjs <lecture> <out>  # model order, dropdowns, settings page
 ./scripts/package-release.sh                     # the download zip
+```
+
+The README's pictures and GIF come from the demo lecture:
+
+```bash
+python3 scripts/e2e/make_lecture.py /tmp/rag --demo
+node scripts/e2e/run.mjs /tmp/rag /tmp/rag-out --record   # screenshots, plus rec-play.webm and rec-note.webm
+node scripts/e2e/model-menu.mjs /tmp/rag /tmp/rag-menu
 ```
 
 The end-to-end tests drive the real extension in Chrome for Testing 131

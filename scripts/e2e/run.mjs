@@ -19,6 +19,10 @@ import puppeteer from 'puppeteer-core';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [lectureDir, outDir] = process.argv.slice(2);
 const noCompose = process.argv.includes('--no-compose');
+// --record: video of the lecture playing (rec-play.webm) and of a tour through
+// the finished note and code (rec-note.webm), for the README's GIF.
+const record = process.argv.includes('--record');
+const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 // A real site instead of the generated lecture: --url mode plays for
 // --seconds of video (at 2x), then presses "Write notes now".
 const isUrl = /^https?:/.test(lectureDir || '');
@@ -172,6 +176,7 @@ try {
   await shot(page, path.join(outDir, '0-opened.png'));
 
   // Capture, then play at 2x to the end.
+  const playing = record ? await page.screencast({ path: path.join(outDir, 'rec-play.webm'), ffmpegPath: FFMPEG }) : null;
   await shadow("r.getElementById('primary').click(); return true;");
   await page.evaluate(() => { const v = document.querySelector('video'); v.playbackRate = 2; v.play(); });
   const duration = await page.evaluate(() => document.querySelector('video').duration);
@@ -192,6 +197,7 @@ try {
     await shadow("r.getElementById('primary').click(); return true;"); // Write notes now
   }
   await new Promise((r) => setTimeout(r, 3000));
+  await playing?.stop();
   results.slides = await shadow("return r.getElementById('sig-slides').textContent");
   results.watched = await shadow("return r.getElementById('sig-watched').textContent");
   results.speechAfter = await shadow("return r.getElementById('sig-speech').textContent");
@@ -235,6 +241,7 @@ try {
       await shadow("r.getElementById('body').scrollTop = 99999; return true;");
       await new Promise((r) => setTimeout(r, 400));
       await shot(page, path.join(outDir, '7-code-end.png'));
+      if (record) await tour(page, shadow, path.join(outDir, 'rec-note.webm'));
       const note = await sidecar(`/session/${key}/note`);
       if (note) writeFileSync(path.join(outDir, 'note.md'), note.content);
       results.ok = true;
@@ -254,6 +261,23 @@ try {
   server?.close();
   side?.kill();
   if (!process.argv.includes('--keep')) rmSync(work, { recursive: true, force: true });
+}
+
+/** The finished note, read top to bottom at a reading pace, then the code. */
+async function tour(page, shadow, file) {
+  await shadow("r.querySelector('.tab[data-view=note]').click(); r.getElementById('body').scrollTop = 0; return true;");
+  await new Promise((r) => setTimeout(r, 800));
+  const recorder = await page.screencast({ path: file, ffmpegPath: FFMPEG });
+  await new Promise((r) => setTimeout(r, 2500));
+  const height = await shadow("const b = r.getElementById('body'); return b.scrollHeight - b.clientHeight;");
+  for (let y = 0; y <= height; y += 14) {
+    await shadow(`r.getElementById('body').scrollTop = ${y}; return true;`);
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  await shadow("r.querySelector('.tab[data-view=code]').click(); r.getElementById('body').scrollTop = 0; return true;");
+  await new Promise((r) => setTimeout(r, 3500));
+  await recorder.stop();
 }
 
 function listFiles(dir) {

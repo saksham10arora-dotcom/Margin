@@ -14,12 +14,18 @@ cd "$(dirname "$0")"
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 bold "Where should Margin save your notes?"
-DEFAULT="$HOME/MarginNotes"
+# Updating? The folder you already use, so pressing Return never moves your notes.
+SAVED="$HOME/.margin/notes-folder"
+DEFAULT="$(cat "$SAVED" 2>/dev/null || true)"
+[ -n "$DEFAULT" ] || DEFAULT="$(curl -s --max-time 2 http://127.0.0.1:8766/health 2>/dev/null \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin).get("vault") or "")' 2>/dev/null || true)"
+[ -n "$DEFAULT" ] || DEFAULT="$HOME/MarginNotes"
 echo "  A folder inside your Obsidian vault works best, for example ~/Documents/Vault/Lectures."
 read -r -p "  Folder [$DEFAULT]: " VAULT || true
 VAULT="${VAULT:-$DEFAULT}"
 VAULT="${VAULT/#\~/$HOME}"
-mkdir -p "$VAULT"
+mkdir -p "$VAULT" "$HOME/.margin"
+printf '%s\n' "$VAULT" > "$SAVED"
 export MARGIN_VAULT_PATH="$VAULT"
 
 bold "Setting up"
