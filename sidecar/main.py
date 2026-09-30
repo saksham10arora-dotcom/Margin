@@ -13,9 +13,12 @@ The browser captures, this process thinks and writes. Routes:
   POST /session/{key}/compose          write the note + notebook section (async)
   GET  /session/{key}/note             the composed note, for the panel
   GET  /session/{key}/code             this lecture's notebook cells + outputs
+  GET  /session/{key}/crux             the 80/20 of the lecture (POST: make it for an older note)
+  POST /session/{key}/ask              a question, answered from the lecture with its moments
+  GET  /session/{key}/cards            flashcards to quiz in the panel (POST: make them)
   GET  /course/{course_id}             every captured lecture in a course
   GET  /transcript?video_id=           YouTube captions (public API)
-  POST /export/flashcards              Anki TSV from a note
+  POST /export/flashcards              Anki TSV from any note in the vault
   GET  /documents, /documents/search, /documents/content
 
 Everything arrives from the extension's background worker, never straight
@@ -38,7 +41,8 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from sidecar import asr, catalog, chain, keys, library, llm, pipeline, providers
+from sidecar import asr, catalog, chain, keys, library, llm, pipeline, providers, study
+from sidecar import compose as C
 from sidecar import notebook as NB
 from sidecar.anki_export import build_flashcard_prompt, cards_to_tsv, parse_flashcards
 from sidecar.config import VAULT_PATH
@@ -99,7 +103,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.8.4"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide
+VERSION = "2.9.0"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -319,6 +323,91 @@ def get_note(key: str, vault_path: Path = Depends(get_vault_path)):
         "folder": folder,
         "obsidian_uri": library.obsidian_uri(path),
     }
+
+
+def _note_or_404(session, vault_path: Path) -> tuple[Path, str]:
+    path = library.lecture_note_path(vault_path, session.meta)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Write the notes first")
+    return path, path.read_text()
+
+
+@app.get("/session/{key}/crux")
+def get_crux(key: str, vault_path: Path = Depends(get_vault_path)):
+    session = _session_or_404(key)
+    made = session.study("crux")
+    if made:
+        return made
+    path = library.lecture_note_path(vault_path, session.meta)
+    crux = study.crux_in_note(path.read_text()) if path.exists() else None
+    if not crux:
+        raise HTTPException(status_code=404, detail="No crux yet")
+    return {"crux": crux}
+
+
+@app.post("/session/{key}/crux")
+def make_crux(key: str, vault_path: Path = Depends(get_vault_path)):
+    """The crux for a note written before notes had one. Added to the note too,
+    unless you have edited it: then it stays here, in the panel."""
+    session = _session_or_404(key)
+    path, note = _note_or_404(session, vault_path)
+    crux = study.crux_in_note(note)
+    engine = None
+    if not crux:
+        try:
+            crux, engine = study.make_crux(note, session.meta.get("lecture_title") or path.stem)
+        except llm.EngineError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        crux = C.link_timestamps(crux, session.meta)
+        if not pipeline.note_edited(session, vault_path):
+            updated = study.with_crux(note, crux)
+            path.write_text(updated)
+            session.record_written(pipeline._digest(updated))
+    session.save_study("crux", {"crux": crux, "engine": engine})
+    return session.study("crux")
+
+
+class Question(BaseModel):
+    question: str
+
+
+@app.post("/session/{key}/ask")
+def ask_lecture(key: str, q: Question, vault_path: Path = Depends(get_vault_path)):
+    session = _session_or_404(key)
+    question = q.question.strip()
+    if not 2 <= len(question) <= 600:
+        raise HTTPException(status_code=422, detail="Ask a question of up to 600 characters")
+    path = library.lecture_note_path(vault_path, session.meta)
+    note = path.read_text() if path.exists() else None
+    try:
+        answer, engine = study.ask(session, note, question)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except llm.EngineError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"question": question, "answer": answer, "engine": engine}
+
+
+@app.get("/session/{key}/cards")
+def get_cards(key: str):
+    session = _session_or_404(key)
+    made = session.study("cards")
+    if not made:
+        raise HTTPException(status_code=404, detail="No flashcards yet")
+    # Made from an earlier version of the note: still shown, with a way to remake them.
+    return {**made, "stale": made.get("note") != session.written_sha}
+
+
+@app.post("/session/{key}/cards")
+def make_cards(key: str, vault_path: Path = Depends(get_vault_path)):
+    session = _session_or_404(key)
+    path, note = _note_or_404(session, vault_path)
+    try:
+        made = study.make_cards(note, session.meta.get("lecture_title") or path.stem)
+    except llm.EngineError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    session.save_study("cards", {**made, "note": session.written_sha})
+    return {**session.study("cards"), "stale": False}
 
 
 @app.get("/session/{key}/code")

@@ -671,3 +671,98 @@ details.callout .callout-body { padding: 0 12px 10px 27px; color: var(--ink-2); 
 .setup span { font-size: 12.5px; color: var(--ink-2); }
 .setup .primary { flex: none; height: 34px; margin-top: 4px; }
 .menu .menu-model b { font-weight: 600; color: var(--ink); }
+
+/* --- crux: the 80/20 of the lecture ------------------------------------------ */
+
+.crux-label {
+  margin: 0 0 10px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--accent-2);
+}
+.crux > p.lead { font-size: 15.5px; line-height: 1.5; font-weight: 600; color: var(--ink); margin: 0 0 14px; text-wrap: balance; }
+.crux ol { list-style: none; counter-reset: crux; padding: 0; margin: 0 0 14px; display: grid; gap: 10px; }
+.crux ol > li {
+  counter-increment: crux; position: relative; margin: 0; padding: 10px 12px 10px 42px;
+  border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); line-height: 1.55;
+}
+.crux ol > li::before {
+  content: counter(crux); position: absolute; left: 12px; top: 10px;
+  width: 20px; height: 20px; border-radius: 99px; display: grid; place-items: center;
+  font: 650 11.5px var(--sans); background: color-mix(in oklch, var(--accent) 22%, var(--surface-2)); color: var(--accent-2);
+}
+.crux ol > li strong { color: var(--ink); }
+.crux p.remember {
+  padding: 10px 12px; border-radius: var(--r-md);
+  background: color-mix(in oklch, var(--accent) 10%, var(--surface)); color: var(--ink-2);
+}
+.crux p.last { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); color: var(--ink); }
+.crux-intro, .quiz-intro, .quiz-done {
+  display: grid; gap: 8px; padding: 16px; border-radius: var(--r-lg); background: var(--surface);
+}
+.crux-intro strong, .quiz-intro strong, .quiz-done strong { font-size: 14px; color: var(--ink); }
+.crux-intro span, .quiz-intro span, .quiz-done span { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+.crux-intro .primary, .quiz-intro .primary, .quiz-done .primary { flex: none; height: 36px; margin-top: 6px; }
+
+/* ask the lecture */
+.ask { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.ask[hidden] { display: none; }
+.ask-label { display: block; margin-bottom: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.ask-row {
+  display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px;
+  border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ask-row:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.ask-row input {
+  flex: 1; min-width: 0; height: 32px; border: 0; background: none; outline: none;
+  color: var(--ink); font: 13.5px var(--sans);
+}
+.ask-row input::placeholder { color: var(--ink-3); }
+.ask-go {
+  flex: none; width: 32px; height: 32px; border: 0; border-radius: 8px; display: grid; place-items: center;
+  background: var(--accent); color: var(--accent-ink);
+}
+.ask-go svg { width: 16px; height: 16px; }
+.answer { margin-top: 14px; }
+.answer .question { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.answer .note { font-size: 13.5px; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface); }
+.answer .note > :first-child { margin-top: 0; }
+.answer .note > :last-child { margin-bottom: 0; }
+.thinking { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+
+/* --- quiz: flashcards you flip -------------------------------------------------- */
+
+.quiz-top { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--ink-3); }
+.quiz-meter { margin: 6px 0 14px; }
+.quiz-meter > i { transition: width 0.4s var(--ease); }
+.flashcard {
+  position: relative; display: grid; min-height: 190px; cursor: pointer; perspective: 1200px;
+  border-radius: var(--r-lg); outline: none;
+}
+.flashcard .face {
+  grid-area: 1 / 1; display: grid; align-content: center; gap: 10px; padding: 22px 20px;
+  border-radius: var(--r-lg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line);
+  backface-visibility: hidden; transition: transform 0.45s var(--ease);
+}
+.flashcard .back { transform: rotateY(180deg); background: color-mix(in oklch, var(--accent) 8%, var(--surface)); }
+.flashcard[data-flipped="true"] .front { transform: rotateY(-180deg); }
+.flashcard[data-flipped="true"] .back { transform: rotateY(0deg); }
+.flashcard:focus-visible .face { box-shadow: inset 0 0 0 2px var(--accent); }
+.face-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--accent-2); }
+.face-text { font-size: 15px; line-height: 1.55; color: var(--ink); }
+.face-text p { margin: 0; }
+.face-hint { font-size: 11.5px; color: var(--ink-3); }
+.grade { display: flex; gap: 8px; margin-top: 12px; }
+.grade[hidden] { display: none; }
+.grade .primary { height: 38px; }
+kbd {
+  font: 600 10.5px var(--mono); padding: 1px 5px; border-radius: 4px;
+  background: color-mix(in oklch, currentColor 14%, transparent);
+}
+.quiz-foot { margin-top: 16px; display: flex; }
+.quiz-foot .primary { flex: none; height: 32px; padding: 0 12px; font-size: 12.5px; }
+.quiz-done { text-align: left; }
+.quiz-stale { margin: 0 0 12px; font-size: 12px; color: var(--warn); }
+.quiz-stale a { color: var(--link); }
+.anki-help { margin-top: 12px; font-size: 12px; color: var(--ink-3); }
+.anki-help summary { cursor: pointer; width: max-content; }
+.anki-help p { margin: 8px 0 0; line-height: 1.55; color: var(--ink-2); }
+.anki-help a { color: var(--link); }

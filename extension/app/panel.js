@@ -11,6 +11,7 @@
 // it what to show and it reports clicks back through `handlers`.
 
 import { decodeEntities, escapeHtml, highlightPython, renderMarkdown } from './render.js';
+import { Quiz } from './quiz.js';
 import { formatTs, noteProvenance } from './util.js';
 
 const ICON = {
@@ -29,7 +30,14 @@ const ICON = {
   chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
   redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
   code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>',
+  ask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
 };
+
+const ANKI_HELP = `<details class="anki-help"><summary>What is Anki?</summary>
+  <p>A free flashcard app that shows each card again just before you would forget it, so what you learn stays
+  for months, not days. <b>Export to Anki</b> saves these cards as a file; in Anki, choose File, then Import.
+  Get it at <a href="https://apps.ankiweb.net" target="_blank" rel="noopener">apps.ankiweb.net</a>.</p></details>`;
 
 const STEPS = [
   { id: 'queued', label: 'Queued' },
@@ -87,6 +95,8 @@ export class Panel {
         <nav class="tabs" role="tablist">
           <button class="tab" role="tab" data-view="live" aria-selected="true">Live<span class="count" id="count-live"></span></button>
           <button class="tab" role="tab" data-view="note" aria-selected="false">Notes</button>
+          <button class="tab" role="tab" data-view="crux" aria-selected="false">Crux</button>
+          <button class="tab" role="tab" data-view="quiz" aria-selected="false">Quiz</button>
           <button class="tab" role="tab" data-view="code" aria-selected="false">Code</button>
           <button class="tab" role="tab" data-view="course" aria-selected="false">Course</button>
         </nav>
@@ -102,6 +112,19 @@ export class Panel {
             <div class="now" id="now" hidden><b id="now-t"></b><span id="now-text"></span></div>
           </section>
           <section class="view" data-view="note" hidden><div id="note-area"></div></section>
+          <section class="view" data-view="crux" hidden>
+            <div id="crux-area"></div>
+            <form class="ask" id="ask" hidden>
+              <label class="ask-label" for="ask-input">Ask the lecture</label>
+              <div class="ask-row">
+                <input id="ask-input" type="text" maxlength="600" autocomplete="off" spellcheck="true"
+                  placeholder="Anything it covered. Answers link to the moment.">
+                <button class="ask-go" type="submit" aria-label="Ask">${ICON.ask}</button>
+              </div>
+            </form>
+            <div id="answers"></div>
+          </section>
+          <section class="view" data-view="quiz" hidden><div id="quiz-area"></div></section>
           <section class="view" data-view="code" hidden><div id="code-area"></div></section>
           <section class="view" data-view="course" hidden>
             <div class="backfill" id="backfill" hidden>
@@ -122,7 +145,7 @@ export class Panel {
             <button role="menuitem" data-act="obsidian">${ICON.obsidian}Open note in Obsidian</button>
             <button role="menuitem" data-act="notebook">${ICON.code}Open the course notebook</button>
             <button role="menuitem" data-act="copy">${ICON.copy}Copy note as markdown</button>
-            <button role="menuitem" data-act="cards">${ICON.cards}Export Anki flashcards</button>
+            <button role="menuitem" data-act="cards">${ICON.cards}Quiz and Anki flashcards</button>
             <button role="menuitem" data-act="recompose">${ICON.redo}Rewrite the notes</button>
             <button role="menuitem" data-act="model">${ICON.model}<span class="menu-model">Models: <b id="model-label">…</b></span></button>
             <button role="menuitem" data-act="settings">${ICON.gear}Settings: keys and subscriptions</button>
@@ -168,7 +191,21 @@ export class Panel {
       this.$('menu').hidden = true;
       this.h.onMenu(act);
     });
+    this.$('ask').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = this.$('ask-input').value.trim();
+      if (q.length < 2) return;
+      this.$('ask-input').value = '';
+      this.h.onAsk?.(q);
+    });
+    this.$('quiz-area').addEventListener('keydown', (e) => this.quizKey(e));
     this.$('body').addEventListener('click', (e) => {
+      const act = e.target.closest('[data-study]')?.dataset.study;
+      if (act) {
+        e.preventDefault();
+        this.studyAction(act, e.target.closest('[data-study]'));
+        return;
+      }
       const seek = e.target.closest('[data-seek]');
       if (seek) {
         e.preventDefault();
@@ -207,9 +244,13 @@ export class Panel {
   }
 
   show(view) {
+    // Each tab keeps its own place: back to the note where you left it, a new tab from the top.
+    const body = this.$('body');
+    this.scrolls = { ...this.scrolls, [this.view]: body.scrollTop };
     this.view = view;
     this.root.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.view === view)));
     this.root.querySelectorAll('.view').forEach((v) => { v.hidden = v.dataset.view !== view; });
+    body.scrollTop = this.scrolls[view] || 0;
     this.h.onView(view);
   }
 
@@ -235,6 +276,12 @@ export class Panel {
     this.$('now').hidden = true;
     this.$('note-area').innerHTML = '';
     this.$('code-area').innerHTML = '';
+    this.$('crux-area').innerHTML = '';
+    this.$('answers').innerHTML = '';
+    this.$('ask').hidden = true;
+    this.$('quiz-area').innerHTML = '';
+    this.quiz = null;
+    this.scrolls = {}; // a new lecture starts every tab at the top
     this.setSlides(0);
     this.setWatched(0);
   }
@@ -351,13 +398,154 @@ export class Panel {
     area.innerHTML = (made ? `<p class="note-meta">${escapeHtml(made)}</p>` : '')
       + `<article class="note">${html}</article>`;
     const article = area.querySelector('.note');
-    if (typeof window.renderMathInElement === 'function') {
-      window.renderMathInElement(article, {
-        delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }],
-        throwOnError: false,
-      });
-    }
+    this.math(article);
     await Promise.all([this.loadImages(article), this.drawMermaid(article)]);
+  }
+
+  math(scope) {
+    if (typeof window.renderMathInElement !== 'function') return;
+    window.renderMathInElement(scope, {
+      delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }],
+      throwOnError: false,
+    });
+  }
+
+  // --- the crux, and asking the lecture ------------------------------------------------
+
+  /**
+   * state: 'later' (no notes yet), 'missing' (a note from before there was a
+   * crux), 'making', or 'ready' with the crux markdown.
+   */
+  showCrux({ state, crux = '', engine = '' }) {
+    const area = this.$('crux-area');
+    if (state === 'later') {
+      area.innerHTML = `<div class="empty"><strong>The crux comes with the notes.</strong>`
+        + `When the lecture's notes are written, this is the 20% of it that gives 80% of the understanding: `
+        + `the one idea, the few that matter most, and what to remember.</div>`;
+      return;
+    }
+    if (state === 'missing' || state === 'making') {
+      const making = state === 'making';
+      area.innerHTML = `<div class="crux-intro"><strong>The 80/20 of this lecture</strong>`
+        + `<span>This note was written before Margin made a crux. It takes one short read of the note.</span>`
+        + `<button class="primary" data-study="make-crux" ${making ? 'disabled' : ''}>${making ? 'Finding the crux…' : 'Make the crux'}</button></div>`;
+      return;
+    }
+    area.innerHTML = `<p class="crux-label">The 80/20 of this lecture</p><article class="note crux">${renderMarkdown(crux)}</article>`
+      + (engine ? `<p class="note-meta">${escapeHtml(engine)}</p>` : '');
+    const article = area.querySelector('.crux');
+    // The lead sentence, the line to remember and the last line each get their own look.
+    article.querySelector(':scope > p')?.classList.add('lead');
+    for (const p of article.querySelectorAll(':scope > p')) {
+      const start = p.textContent.trim();
+      if (start.startsWith('Remember:')) p.classList.add('remember');
+      if (start.startsWith('If you forget everything else:')) p.classList.add('last');
+    }
+    this.math(article);
+  }
+
+  /** Asking works as soon as there is a lecture to ask about, notes or not. */
+  setAskable(yes) {
+    this.$('ask').hidden = !yes;
+  }
+
+  /** A question, and its answer once it comes (null while waiting). */
+  showAnswer(id, question, answer, { error = false } = {}) {
+    let item = this.$('answers').querySelector(`[data-answer="${id}"]`);
+    let created = false;
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'answer';
+      item.dataset.answer = id;
+      this.$('answers').prepend(item);
+      created = true;
+    }
+    const body = answer === null
+      ? '<p class="thinking">Looking through the lecture…</p>'
+      : error ? `<div class="error-box">${escapeHtml(answer)}</div>` : `<div class="note">${renderMarkdown(answer)}</div>`;
+    item.innerHTML = `<p class="question">${escapeHtml(question)}</p>${body}`;
+    this.math(item);
+    // The answer lands below the crux: keep the question at the top of the view
+    // as you ask, and again when the answer arrives and makes it taller.
+    if (created || item === this.$('answers').firstElementChild) item.scrollIntoView({ block: 'start' });
+  }
+
+  // --- the quiz ------------------------------------------------------------------------
+
+  /** state: 'later', 'none' (no cards yet), 'making', or 'ready' with cards. */
+  showQuiz({ state, cards = [], stale = false }) {
+    const area = this.$('quiz-area');
+    if (state === 'later') {
+      area.innerHTML = `<div class="empty"><strong>Flashcards come from the notes.</strong>`
+        + `Once this lecture has notes, Margin turns them into cards to quiz yourself on, right here.</div>`;
+      return;
+    }
+    if (state === 'none' || state === 'making') {
+      const making = state === 'making';
+      area.innerHTML = `<div class="quiz-intro">
+          <strong>Quiz yourself on this lecture</strong>
+          <span>Margin turns the note into flashcards: a question on the front, the answer on the back.
+            Answer in your head, flip, and say whether you knew it. The ones you miss come back until you know them all.</span>
+          <button class="primary" data-study="make-cards" ${making ? 'disabled' : ''}>${making ? 'Writing the flashcards…' : 'Make the flashcards'}</button>
+        </div>${ANKI_HELP}`;
+      return;
+    }
+    this.quiz = new Quiz(cards);
+    this.quizStale = stale;
+    this.drawQuiz();
+  }
+
+  drawQuiz() {
+    const q = this.quiz;
+    const area = this.$('quiz-area');
+    const total = q.cards.length;
+    const stale = this.quizStale
+      ? '<p class="quiz-stale">The note changed since these were made. <a href="#" data-study="make-cards">Make new ones</a></p>' : '';
+    const foot = `<div class="quiz-foot"><button class="primary" data-kind="quiet" data-study="export-cards">${ICON.download}Export to Anki</button></div>${ANKI_HELP}`;
+    if (q.done) {
+      const again = q.missed.size;
+      area.innerHTML = `${stale}<div class="quiz-done">
+          <strong>All ${total} cards done.</strong>
+          <span>${again ? `${again} needed another look. Quiz again tomorrow and they will stick.` : 'You knew every one the first time.'}</span>
+          <button class="primary" data-study="restart">Quiz again</button>
+        </div>${foot}`;
+      return;
+    }
+    const card = q.current;
+    area.innerHTML = `${stale}
+      <div class="quiz-top"><span>${q.known} of ${total} known</span><span>${q.toRepeat ? `${q.toRepeat} coming back` : ''}</span></div>
+      <div class="meter quiz-meter"><i style="width:${Math.round((q.known / total) * 100)}%"></i></div>
+      <div class="flashcard" data-study="flip" role="button" tabindex="0" data-flipped="${q.flipped}"
+        aria-label="${q.flipped ? 'Answer shown' : 'Show the answer'}">
+        <div class="face front"><span class="face-label">Question</span><div class="face-text">${renderMarkdown(card.front)}</div>
+          <span class="face-hint">Space or click to flip</span></div>
+        <div class="face back"><span class="face-label">Answer</span><div class="face-text">${renderMarkdown(card.back)}</div></div>
+      </div>
+      <div class="grade" ${q.flipped ? '' : 'hidden'}>
+        <button class="primary" data-kind="quiet" data-study="again">Again <kbd>1</kbd></button>
+        <button class="primary" data-study="knew">Got it <kbd>2</kbd></button>
+      </div>${foot}`;
+    this.math(area.querySelector('.flashcard'));
+    if (this.view === 'quiz') area.querySelector('.flashcard').focus({ preventScroll: true });
+  }
+
+  quizKey(e) {
+    if (!this.quiz || this.quiz.done || e.target.closest('input, textarea')) return;
+    if (e.key === ' ' || e.key === 'Enter') this.studyAction('flip');
+    else if (e.key === '1' && this.quiz.flipped) this.studyAction('again');
+    else if (e.key === '2' && this.quiz.flipped) this.studyAction('knew');
+    else return;
+    e.preventDefault();
+  }
+
+  studyAction(act) {
+    if (act === 'make-crux') this.h.onMakeCrux?.();
+    else if (act === 'make-cards') this.h.onMakeCards?.();
+    else if (act === 'export-cards') this.h.onExportCards?.();
+    else if (!this.quiz) return;
+    else if (act === 'flip') { this.quiz.flip(); this.drawQuiz(); }
+    else if (act === 'again' || act === 'knew') { this.quiz.grade(act === 'knew'); this.drawQuiz(); }
+    else if (act === 'restart') { this.quiz = new Quiz(this.quiz.cards); this.drawQuiz(); }
   }
 
   async loadImages(scope) {

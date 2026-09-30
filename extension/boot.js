@@ -32,10 +32,15 @@
     url: (path) => chrome.runtime.getURL(path),
     storageGet: (defaults) => chrome.storage.local.get(defaults),
     storageSet: (values) => chrome.storage.local.set(values),
-    onDestroy: () => { app = null; },
+    // Closed with its x: stay closed on this lecture. Without this the check
+    // below saw a lecture page with no Margin and opened it again a second later.
+    onDestroy: ({ byUser = false } = {}) => { app = null; if (byUser) closedOn = page(); },
   };
 
   let app = null;
+  let closedOn = null;
+  // The lecture you are on: Udemy and YouTube change it without a reload.
+  const page = () => location.pathname + location.search;
   let opening = null;
   let retired = false;
 
@@ -54,7 +59,7 @@
     // not add a second one.
     if (msg?.type === 'margin:ping') return void sendResponse({ ok: true });
     if (msg?.type !== 'margin:toggle') return;
-    if (!app) open({ byUser: true }); // the toolbar button or Alt+Shift+M: open it, expanded
+    if (!app) { closedOn = null; open({ byUser: true }); } // the toolbar button or Alt+Shift+M
     else app.panel.collapse(app.panel.expanded);
     sendResponse({ ok: true });
   }
@@ -73,7 +78,8 @@
   // These sites navigate without reloading, so keep checking.
   const timer = setInterval(() => {
     if (!connected()) return retire(); // Margin was reloaded, updated or removed
-    if (app || opening) return;
+    if (app || opening || closedOn === page()) return;
+    closedOn = null; // a different lecture: open as usual
     if (isLecturePage() && document.querySelector('video')) open();
   }, 1000);
   window.addEventListener('pagehide', () => clearInterval(timer));

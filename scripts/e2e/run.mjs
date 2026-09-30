@@ -213,7 +213,7 @@ try {
     const status = await waitFor(async () => {
       const s = await sidecar(`/session/${key}`);
       return s && ['done', 'error'].includes(s.status.state) ? s.status : null;
-    }, { timeout: 240000, every: 2000, what: 'compose (auto on end)' });
+    }, { timeout: 600000, every: 2000, what: 'compose (auto on end)' });
     results.status = status;
     log('compose:', status.state, status.message);
     if (status.state === 'done') {
@@ -241,6 +241,7 @@ try {
       await shadow("r.getElementById('body').scrollTop = 99999; return true;");
       await new Promise((r) => setTimeout(r, 400));
       await shot(page, path.join(outDir, '7-code-end.png'));
+      await study(page, shadow, results);
       if (record) await tour(page, shadow, path.join(outDir, 'rec-note.webm'));
       const note = await sidecar(`/session/${key}/note`);
       if (note) writeFileSync(path.join(outDir, 'note.md'), note.content);
@@ -263,20 +264,59 @@ try {
   if (!process.argv.includes('--keep')) rmSync(work, { recursive: true, force: true });
 }
 
-/** The finished note, read top to bottom at a reading pace, then the code. */
+/** The study tabs: the crux, a question to the lecture, and the flashcard quiz. */
+async function study(page, shadow, results) {
+  await shadow("r.querySelector('.tab[data-view=crux]').click(); return true;");
+  await waitFor(() => shadow("return !!r.querySelector('.crux li')"), { what: 'the crux', timeout: 30000 });
+  results.crux = await shadow(`return { items: r.querySelectorAll('.crux ol > li').length,
+    lead: !!r.querySelector('.crux p.lead'), last: !!r.querySelector('.crux p.last'),
+    words: r.querySelector('.crux').textContent.trim().split(/\\s+/).length }`);
+  await shot(page, path.join(outDir, '8-crux.png'));
+
+  await shadow(`const i = r.getElementById('ask-input'); i.value = 'Why do the chunks overlap?';
+    r.getElementById('ask').requestSubmit(); return true;`);
+  await waitFor(() => shadow("return !!r.querySelector('.answer .note, .answer .error-box')"), { what: 'an answer', timeout: 120000 });
+  results.ask = await shadow(`return { ok: !!r.querySelector('.answer .note'), jumps: r.querySelectorAll('.answer a.ts').length,
+    text: r.querySelector('.answer').textContent.slice(0, 300) }`);
+  await shot(page, path.join(outDir, '9-ask.png'));
+
+  await shadow("r.querySelector('.tab[data-view=quiz]').click(); return true;");
+  await waitFor(() => shadow("return !!r.querySelector('[data-study=make-cards]')"), { what: 'the quiz intro' });
+  await shot(page, path.join(outDir, '10-quiz-intro.png'));
+  await shadow("r.querySelector('[data-study=make-cards]').click(); return true;");
+  await waitFor(() => shadow("return !!r.querySelector('.flashcard')"), { what: 'flashcards', timeout: 180000 });
+  await new Promise((r) => setTimeout(r, 600));
+  await shot(page, path.join(outDir, '11-quiz-card.png'));
+  await shadow("r.querySelector('.flashcard').click(); return true;");
+  await new Promise((r) => setTimeout(r, 800));
+  results.quiz = await shadow(`return { flipped: r.querySelector('.flashcard').dataset.flipped,
+    top: r.querySelector('.quiz-top').textContent.trim(), grade: !r.querySelector('.grade').hidden }`);
+  await shot(page, path.join(outDir, '12-quiz-flipped.png'));
+  await shadow("r.querySelector('[data-study=knew]').click(); return true;");
+  results.quiz.after = await shadow("return r.querySelector('.quiz-top').textContent.trim()");
+}
+
+/** The finished note, read top to bottom, then the crux, a flashcard and the code. */
 async function tour(page, shadow, file) {
   await shadow("r.querySelector('.tab[data-view=note]').click(); r.getElementById('body').scrollTop = 0; return true;");
   await new Promise((r) => setTimeout(r, 800));
   const recorder = await page.screencast({ path: file, ffmpegPath: FFMPEG });
   await new Promise((r) => setTimeout(r, 2500));
   const height = await shadow("const b = r.getElementById('body'); return b.scrollHeight - b.clientHeight;");
-  for (let y = 0; y <= height; y += 14) {
+  for (let y = 0; y <= height; y += 18) {
     await shadow(`r.getElementById('body').scrollTop = ${y}; return true;`);
     await new Promise((r) => setTimeout(r, 40));
   }
-  await new Promise((r) => setTimeout(r, 1500));
-  await shadow("r.querySelector('.tab[data-view=code]').click(); r.getElementById('body').scrollTop = 0; return true;");
+  await new Promise((r) => setTimeout(r, 1200));
+  const tab = (view) => shadow(`r.querySelector('.tab[data-view=${view}]').click(); r.getElementById('body').scrollTop = 0; return true;`);
+  await tab('crux'); // the 80/20
   await new Promise((r) => setTimeout(r, 3500));
+  await tab('quiz'); // a flashcard, flipped
+  await new Promise((r) => setTimeout(r, 1600));
+  await shadow("r.querySelector('.flashcard')?.click(); return true;");
+  await new Promise((r) => setTimeout(r, 2600));
+  await tab('code');
+  await new Promise((r) => setTimeout(r, 3000));
   await recorder.stop();
 }
 

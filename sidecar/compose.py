@@ -35,6 +35,21 @@ from sidecar.sessions import Session, format_ts
 MAX_SLIDES = 24
 MAX_TRANSCRIPT_CHARS = 120_000  # ~2h of speech; longer lectures are trimmed evenly
 
+# The crux of a lecture, the 80/20 of it: asked for with the note (a CRUX
+# block), and on its own for a note written before there was one (study.py).
+CRUX_RULES = """The crux: the 20% of this lecture that gives 80% of the understanding, for someone revising it
+in two minutes a week from now. Markdown with no heading, roughly 120 to 300 words, scaled to how
+much the lecture covers:
+- First, one sentence that states the one idea this lecture exists to teach. State the idea
+  itself: never begin with "The single idea", "The main idea" or "This lecture".
+- Then the ideas that matter most as a numbered list, three to six (fewer for a short or light
+  lecture): each a **bold phrase** and one or two sentences on why it matters or how it works.
+- Only if the lecture has them, a line starting `**Remember:**` with the formula, definition or
+  command worth memorising (formulas in KaTeX).
+- Last, one line starting `**If you forget everything else:**`.
+No examples, history or asides, and nothing the note does not say. Same rules as the note.
+"""
+
 
 @dataclass
 class Composition:
@@ -45,6 +60,7 @@ class Composition:
     slides_used: list[str] = field(default_factory=list)
     code_source: str | None = None  # the course repo notebook the code came from
     engine_chosen: bool = False     # written by the model picked in the menu
+    crux: str = ""                  # the 80/20 of the lecture (CRUX block), markdown
 
 
 # --- slide selection ---------------------------------------------------------
@@ -143,7 +159,7 @@ Lectures differ, so shape the note to this one. A concept lecture needs intuitio
 coding lecture needs its code; an overview, recap, setup or motivation lecture needs a clear map of
 what it covered and what it asks you to do. Leave out any optional section that does not fit.
 
-Produce exactly these four blocks, in this order, with the markers on their own lines.
+Produce exactly these five blocks, in this order, with the markers on their own lines.
 
 <<<NOTE>>>
 The note, in Obsidian-flavoured markdown. No frontmatter and no H1 title (both are added for you).
@@ -207,6 +223,8 @@ Never use em dashes; use a comma, colon, parentheses or a new sentence instead.
 One sentence (under 25 words) saying what this lecture teaches, for a course index. Start
 with the subject itself, never "This lecture" or "In this lecture".
 
+<<<CRUX>>>
+{CRUX_RULES}
 <<<CODE>>>
 The notebook cells for this lecture, in jupytext percent format: `# %% [markdown]` starts a
 markdown cell (every line prefixed with `# `), `# %%` starts a code cell. Start with a markdown
@@ -246,8 +264,8 @@ Transcript (timestamps in [mm:ss]):
 # <<<GIST>>> as asked, and the ways other models write it anyway: **GIST**,
 # ## GIST, GIST:, [GIST]. Upper case only, so a "## Code" topic heading in a
 # note is never mistaken for one.
-_MARKER = re.compile(r"^[ \t]*(?:<<<\s*(NOTE|GIST|CODE|END)\s*>>>|(?:#{1,4}[ \t]*)?(?:\*\*|\[)?"
-                     r"(NOTE|GIST|CODE|END)(?:\*\*|\])?:?)[ \t]*$", re.MULTILINE)
+_MARKER = re.compile(r"^[ \t]*(?:<<<\s*(NOTE|GIST|CRUX|CODE|END)\s*>>>|(?:#{1,4}[ \t]*)?(?:\*\*|\[)?"
+                     r"(NOTE|GIST|CRUX|CODE|END)(?:\*\*|\])?:?)[ \t]*$", re.MULTILINE)
 
 
 def split_blocks(raw: str) -> dict[str, str]:
@@ -379,6 +397,25 @@ def is_complete(raw: str) -> bool:
     return "GIST" in split_blocks(raw)
 
 
+# "The single idea this lecture exists to teach is that RAG..." -> "RAG...":
+# a model echoing the instruction instead of stating the idea.
+_CRUX_OPENER = re.compile(
+    r"\A(?:the (?:single|one|main|core|key|central|big) idea\s*(?:(?:that\s+)?(?:this|the) lecture\s+"
+    r"(?:exists to teach|teaches)\s+is(?:\s+that)?|(?:here\s+)?(?:is that|:))\s*"
+    r"|this lecture (?:exists to teach|teaches)\s+(?:that\s+)?)",
+    re.IGNORECASE)
+
+
+def parse_crux(raw: str) -> str:
+    """The CRUX block, tidied like the note; empty when a model left it out."""
+    crux = _strip_fence(split_blocks(raw).get("CRUX", ""))
+    crux = re.sub(r"\A\s*#{1,4} [^\n]*\n", "", crux).strip()  # a heading we asked it not to add
+    trimmed = _CRUX_OPENER.sub("", crux, count=1)
+    if trimmed != crux and trimmed:
+        crux = trimmed[0].upper() + trimmed[1:]
+    return tidy_typography(remove_em_dashes(crux)).strip()
+
+
 def parse_response(raw: str) -> tuple[str, str, list[dict]]:
     blocks = split_blocks(raw)
     note = _strip_fence(blocks.get("NOTE", "")) if "NOTE" in blocks else raw.strip()
@@ -421,6 +458,7 @@ def compose(session: Session, previous_gist: str | None = None, progress=None,
     note, gist, cells = parse_response(raw)
     used = sorted(set(re.findall(r"\{\{slide:(S\d{3,4})\}\}", note)))
     return Composition(note_body=note, gist=gist, cells=cells, engine=engine, slides_used=used,
+                       crux=parse_crux(raw),
                        code_source=repo_notebook["source"] if repo_notebook and cells else None,
                        engine_chosen=bool(choice) and str(choice.get("model")) in engine)
 

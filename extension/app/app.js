@@ -13,7 +13,7 @@ import { Panel } from './panel.js';
 import { isReserved, markBeside, planLayout, releaseSpace, removeLayoutStyle, reserveSpace } from './layout.js';
 import { ModelOrder } from './models-ui.js';
 import { AudioRecorder, FrameSampler } from './sensors.js';
-import { coverage, mergeRanges, shouldAutoCompose, textBetween } from './util.js';
+import { coverage, engineName, mergeRanges, shouldAutoCompose, textBetween } from './util.js';
 
 // Course platforms are captured the moment a lecture plays. YouTube and the
 // open web are opt-in per video: most of what people watch there is not a
@@ -22,7 +22,7 @@ const CAPTURE_BY_DEFAULT = { udemy: true, coursera: true, local: true, youtube: 
 
 // The sidecar is long-running, so it can be older than a freshly reloaded
 // extension. Below this, features the extension relies on are missing.
-const MIN_SIDECAR = [2, 8, 0];
+const MIN_SIDECAR = [2, 9, 0]; // the Crux, Quiz and Ask routes
 
 function older(version, min) {
   const v = String(version || '0').split('.').map(Number);
@@ -71,6 +71,8 @@ class MarginApp {
     this.edited = false; // you changed the note in your vault since Margin wrote it
     this.status = { state: 'idle' };
     this.speech = 'checking';
+    this.flashcards = null; // made for this lecture: {cards, tsv, stale}
+    this.cardsFor = null;
     this.capturing = false;
     this.audioInFlight = new Set();
   }
@@ -89,7 +91,11 @@ class MarginApp {
       onOpenLecture: (url) => { if (url) location.href = url; },
       onView: (view) => this.onView(view),
       onBackfill: () => this.backfill(),
-      onClose: () => this.destroy(),
+      onAsk: (q) => this.ask(q),
+      onMakeCrux: () => this.makeCrux(),
+      onMakeCards: () => this.makeCards(),
+      onExportCards: () => this.exportCards(),
+      onClose: () => this.destroy({ byUser: true }),
       onLayout: (expanded) => {
         this.layout(expanded);
         // Remember open/closed per site, so YouTube can stay out of the way
@@ -638,6 +644,85 @@ class MarginApp {
     this.note = note.data;
     await this.panel.showNote(note.data);
     await this.loadCode();
+    // A new note brings a new crux, and may leave the flashcards behind it.
+    if (this.panel.view === 'crux') this.loadCrux();
+    if (this.panel.view === 'quiz') { this.cardsFor = null; this.loadCards(); }
+  }
+
+  // --- study: the crux, asking the lecture, the quiz ------------------------------------
+
+  async loadCrux() {
+    this.panel.setAskable(Boolean(this.session));
+    if (!this.session || !this.composed) {
+      this.panel.showCrux({ state: 'later' });
+      return;
+    }
+    const res = await this.api('GET', `/session/${this.session}/crux`);
+    if (res.ok) this.panel.showCrux({ state: 'ready', crux: res.data.crux, engine: this.madeBy(res.data.engine) });
+    else this.panel.showCrux({ state: 'missing' });
+  }
+
+  async makeCrux() {
+    this.panel.showCrux({ state: 'making' });
+    const res = await this.api('POST', `/session/${this.session}/crux`);
+    if (!res.ok) {
+      this.panel.showCrux({ state: 'missing' });
+      this.panel.toast(`No crux yet: ${res.data?.detail || 'is the sidecar running?'}`, 7000);
+      return;
+    }
+    this.panel.showCrux({ state: 'ready', crux: res.data.crux, engine: this.madeBy(res.data.engine) });
+    const note = await this.api('GET', `/session/${this.session}/note`); // it has the crux in it now
+    if (note.ok) { this.note = note.data; await this.panel.showNote(note.data); }
+  }
+
+  madeBy(engine) {
+    return engine ? `Made by ${engineName(engine)}` : '';
+  }
+
+  async ask(question) {
+    if (!this.session) return;
+    const id = `q${Date.now()}`;
+    this.panel.showAnswer(id, question, null);
+    const res = await this.api('POST', `/session/${this.session}/ask`, { question });
+    if (res.ok) this.panel.showAnswer(id, question, res.data.answer);
+    else this.panel.showAnswer(id, question, res.data?.detail || 'Margin could not answer that: is the sidecar running?', { error: true });
+  }
+
+  async loadCards() {
+    if (!this.session || !this.composed) {
+      this.panel.showQuiz({ state: 'later' });
+      return;
+    }
+    if (this.panel.quiz && this.cardsFor === this.session) return; // keep the round you are in
+    const res = await this.api('GET', `/session/${this.session}/cards`);
+    if (!res.ok) {
+      this.panel.showQuiz({ state: 'none' });
+      return;
+    }
+    this.flashcards = res.data;
+    this.cardsFor = this.session;
+    this.panel.showQuiz({ state: 'ready', cards: res.data.cards, stale: res.data.stale });
+  }
+
+  async makeCards() {
+    this.panel.showQuiz({ state: 'making' });
+    const res = await this.api('POST', `/session/${this.session}/cards`);
+    if (!res.ok) {
+      this.panel.showQuiz({ state: 'none' });
+      this.panel.toast(`No flashcards yet: ${res.data?.detail || 'is the sidecar running?'}`, 7000);
+      return;
+    }
+    this.flashcards = res.data;
+    this.cardsFor = this.session;
+    this.panel.showQuiz({ state: 'ready', cards: res.data.cards });
+  }
+
+  exportCards() {
+    const made = this.flashcards;
+    if (!made?.tsv) return;
+    const name = (this.note?.filename?.split('/').pop() || 'lecture.md').replace(/\.md$/, '');
+    download(`${name} - flashcards.txt`, made.tsv);
+    this.panel.toast(`${made.cards.length} flashcards saved. In Anki: File, then Import.`, 6000);
   }
 
   async loadCode() {
@@ -721,6 +806,8 @@ class MarginApp {
   onView(view) {
     if (view === 'course' && this.meta?.course_id) this.loadCourse();
     if (view === 'code' && this.composed) this.loadCode();
+    if (view === 'crux') this.loadCrux();
+    if (view === 'quiz') this.loadCards();
   }
 
   // --- controls -------------------------------------------------------------------
@@ -772,12 +859,8 @@ class MarginApp {
     } else if (act === 'copy' && note) {
       await navigator.clipboard.writeText(note.content);
       this.panel.toast('Note copied as markdown.');
-    } else if (act === 'cards' && note) {
-      this.panel.toast('Making flashcards…', 20000);
-      const res = await this.api('POST', '/export/flashcards', { filename: note.filename });
-      if (!res.ok) { this.panel.toast(`Flashcards failed: ${res.data?.detail || res.status}`, 6000); return; }
-      download(`${note.filename.split('/').pop().replace(/\.md$/, '')} - flashcards.txt`, res.data.tsv);
-      this.panel.toast(`${res.data.count} flashcards downloaded. Import the .txt into Anki.`, 5000);
+    } else if (act === 'cards') {
+      this.panel.show('quiz'); // see them, quiz yourself, and export them from there
     } else if (act === 'recompose') {
       this.compose();
     } else if (act === 'model') {
@@ -870,7 +953,7 @@ class MarginApp {
     if (flexy) this.flexyObserver?.observe(flexy, { attributes: true, attributeFilter: ['theater', 'fullscreen'] });
   }
 
-  destroy() {
+  destroy({ byUser = false } = {}) {
     this.leave('closing');
     clearInterval(this.tickTimer);
     clearInterval(this.pollTimer);
@@ -882,7 +965,7 @@ class MarginApp {
     removeLayoutStyle();
     window.dispatchEvent(new Event('resize'));
     this.panel.destroy();
-    this.bridge.onDestroy?.();
+    this.bridge.onDestroy?.({ byUser });
   }
 }
 

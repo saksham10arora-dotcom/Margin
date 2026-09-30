@@ -22,6 +22,7 @@ import yaml
 from sidecar import compose as C
 from sidecar import library
 from sidecar import notebook as NB
+from sidecar import study
 from sidecar.config import AUTOLINK, MAX_AUTOLINKS_PER_SECTION
 from sidecar.llm import Busy, EngineError, is_lite
 from sidecar.sessions import Session, all_sessions, course_sessions, load_session
@@ -395,6 +396,10 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
         extra_fm["code_from"] = comp.code_source
         extra_fm["code_runs"] = "yourself" if run_info.get("not_run") else run_info.get("ok", False)
     note = C.assemble_note(meta, comp, body, vault, extra_fm)
+    if comp.crux:
+        crux = C.link_timestamps(comp.crux, meta)
+        note = study.with_crux(note, crux)
+        session.save_study("crux", {"crux": crux, "engine": comp.engine})
 
     note_path.parent.mkdir(parents=True, exist_ok=True)
     kept = _keep_your_edits(session, vault, note_path)

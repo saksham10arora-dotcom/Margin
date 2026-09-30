@@ -29,6 +29,12 @@ Written down so they are not rediscovered the hard way.
   (`./scripts/setup.sh --whisper-model`) is noticeably better.
 - **Very long lectures** send at most 24 slides, spread evenly, and trim the
   middle of a transcript over ~120k characters.
+- **Ask the lecture** answers from the transcript and the note; for a lecture
+  with no transcript it has only the note. Each question, like each set of
+  flashcards, is one request to the first model in your order.
+- **Notes written before 2.9** have no crux until you press **Make the crux** in
+  the Crux tab. It is written into the note unless you have edited the note;
+  then it lives in the panel only.
 - Generated code that needs live market data depends on yfinance answering; it
   is told to fall back to synthetic data, and the badge in the Code tab says
   whether the section ran.

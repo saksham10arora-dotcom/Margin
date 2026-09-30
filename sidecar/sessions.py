@@ -469,6 +469,16 @@ class Session:
         return {"key": self.key, "title": self.meta.get("lecture_title"), "before": len(frames),
                 "after": len(kept), "bytes_before": before, "bytes_after": after}
 
+    # --- study tools: the crux and flashcards, kept with the lecture -------------
+
+    def study(self, name: str) -> dict | None:
+        """What was made to study this lecture ("crux", "cards"), or None."""
+        return self._read(f"{name}.json", None)
+
+    def save_study(self, name: str, value: dict) -> None:
+        with _lock_for(self.key):
+            self._write(f"{name}.json", {**value, "made": time.time()})
+
     def frame_bytes(self, frame_id: str) -> bytes | None:
         for frame in self.frames:
             if frame["id"] == frame_id:

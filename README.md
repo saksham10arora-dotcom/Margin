@@ -5,12 +5,14 @@ YouTube or any page with a video, keeps the lecture's own slides as they finish
 building, follows what is said, and when the lecture ends writes a study note
 into your Obsidian vault: the intuition first, the lecture's slides, diagrams,
 formulas, questions to test yourself, and the lecture's code in a course
-notebook, already run.
+notebook, already run. Then it helps you keep it: the crux of the lecture (its
+80/20), flashcards to quiz yourself on, and answers to your questions from the
+lecture itself, linked to the moment it said so.
 
 ![A lecture playing while Margin keeps its slides, then the note it wrote and the code, run](docs/demo.gif)
 
 <sub>A real run, sped up: a short lecture plays, Margin keeps each slide as it finishes building, then writes
-the note (with the lecture's own diagram next to one it drew) and runs the code.</sub>
+the note (with the lecture's own diagram next to one it drew), its crux, flashcards, and runs the code.</sub>
 
 **[Download](https://github.com/saksham10arora-dotcom/Margin/releases/latest)** ·
 [saksham.digital/margin](https://saksham.digital/margin) · macOS first; Linux works with `start.sh`
@@ -39,8 +41,15 @@ the note (with the lecture's own diagram next to one it drew) and runs the code.
   the same note. Edits you make in Obsidian are never overwritten on Margin's own.
 - **Lectures you finished before Margin** get notes from their captions, one
   click in the Course tab.
-- **Flashcards for Anki** from any note: **⋯ → Export Anki flashcards** downloads a file
-  Anki imports as it is.
+- **The crux, the 80/20.** Its own tab: the one idea the lecture exists to teach,
+  the three to six that matter most, what to remember, and the line to keep if you
+  forget everything else. Written with the note, and folded into it in your vault.
+- **Ask the lecture.** Type a question and get the answer from what was actually
+  said, with the moment linked: click it and the video jumps there. Something the
+  lecture never covered is said to be so.
+- **Quiz yourself.** The note becomes flashcards you flip in the panel: say whether
+  you knew it, and the ones you missed come back until you know them all. Export
+  them to [Anki](https://apps.ankiweb.net) in one click when you want spaced repetition.
 - **A course, not a pile of files:** numbered notes linked previous and next, a
   course index, and YouTube playlists treated as courses.
 - **Any model you have.** A free Gemini key, a subscription you already pay for
@@ -56,12 +65,12 @@ Every picture here is from one run on *How RAG works*, a short demo lecture made
 | While you watch | The note |
 |---|---|
 | ![Slides captured as they finish building](docs/live.png) | ![A diagram and the lecture's slide in the note](docs/notes-diagram.png) |
-| **The code, run in a fresh kernel** | **Your models, in order** |
-| ![Code with its output](docs/code.png) | ![The model order](docs/models.png) |
-
-Every model is in the dropdown, searchable, with what it can do and what it costs:
-
-![Searching every model](docs/dropdown.png)
+| **The crux: the 80/20 of the lecture** | **Ask the lecture, answered with the moment** |
+| ![The crux tab](docs/crux.png) | ![A question answered from the lecture, with a link to the moment](docs/ask.png) |
+| **Quiz yourself, then take the cards to Anki** | **The code, run in a fresh kernel** |
+| ![A flashcard, flipped](docs/quiz.png) | ![Code with its output](docs/code.png) |
+| **Your models, in order** | **Every model, searchable, with what it can do and costs** |
+| ![The model order](docs/models.png) | ![Searching every model](docs/dropdown.png) |
 
 And a settings page for keys, subscriptions and local models:
 
@@ -125,12 +134,15 @@ dropdown marks them "text only".
 - **YouTube:** Margin stays a small tab until you press **Capture this lecture**.
   Nothing about a video is stored before that, so your entertainment stays yours.
 - **Anything else with a video:** the toolbar button or `Alt+Shift+M`.
+- **Closed it with ×?** It stays closed on that lecture and opens again on the next;
+  the toolbar button or `Alt+Shift+M` brings it back.
 
 ## Privacy
 
 - Captures stay on your Mac (`~/.margin/sessions`). Audio is transcribed on your Mac.
-- The only thing that leaves it is the note request (transcript and chosen slides)
-  to the model you picked, and nothing at all with a local model.
+- The only things that leave it are requests to the model you picked: the note
+  (transcript and chosen slides), and, when you ask for them, a question or
+  flashcards (with the transcript or note). Nothing at all with a local model.
 - The sidecar only answers Margin's own extension; a website cannot read your
   notes from it, and only Margin's pages can change its settings.
 - API keys travel in request headers, never URLs, so they never reach a log.
@@ -140,7 +152,7 @@ dropdown marks them "text only".
 ```
  the lecture tab ──slides, captions, audio──▶ sidecar (on your Mac, port 8766) ──▶ your model order
         ▲                                        │                                    │
-        └──── Live, Notes, Code, Course ◀────────┴── note + notebook in your vault ◀──┘
+        └ Live, Notes, Crux, Quiz, Code, Course ◀┴── note + notebook in your vault ◀──┘
 ```
 
 The extension reads the playing video directly (a tiny thumbnail twice a second
