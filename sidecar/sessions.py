@@ -47,6 +47,7 @@ SESSIONS_ROOT = Path(os.environ.get("MARGIN_SESSIONS_PATH") or Path.home() / ".m
 # typed), and it replaces the earlier one. A new slide redraws its title and
 # body, so most of the earlier ink is gone.
 THUMB_SIZE = (160, 90)
+FINE_SIZE = (480, 270)  # the sharper second look before a capture is dropped (Session._part_of)
 INK_DELTA = 40          # grey levels from the background that count as a mark
 KEEP_TO_CONTAIN = 0.92  # share of the earlier ink that must survive
 NEW_SPEECH_SECONDS = 3.0  # transcribed speech outside what was heard before that counts as new
@@ -335,10 +336,12 @@ class Session:
                 other = self._thumb(frame)
                 if other is None:
                     continue
-                if contains(other, thumb, moving):
+                inside = contains(other, thumb, moving)
+                same = inside and contains(thumb, other, moving)
+                if same or (inside and self._part_of(frame, image, moving)):
                     # Nothing the kept image lacks: the same slide seen again
                     # (a rewatch) or part of a build. Only its times can widen.
-                    if contains(thumb, other, moving) and (t < frame["t"] or t > frame["t_last"]):
+                    if same and (t < frame["t"] or t > frame["t_last"]):
                         frame["t"] = min(frame["t"], t)
                         frame["t_last"] = max(frame["t_last"], t)
                         frames.sort(key=lambda f: f["t"])
@@ -366,6 +369,23 @@ class Session:
             self._write("frames.json", frames)
             self._bump()
             return {**record, "duplicate": False}
+
+    def _part_of(self, frame: dict, image: Image.Image, moving: np.ndarray | None) -> bool:
+        """A second, sharper look before a capture is dropped as part of a
+        kept slide. In the small picture text blurs into bars, so a new,
+        shorter title over the same illustration can sit inside the old
+        title's bar and pass for part of that slide. At three times the size
+        the letters are letters. Only asked in that case, so it costs one
+        image read now and then."""
+        path = self.root / "frames" / frame["file"]
+        if not path.exists():
+            return True
+        kept = np.asarray(Image.open(path).convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
+        new = np.asarray(image.convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
+        ignore = None
+        if moving is not None:
+            ignore = np.asarray(Image.fromarray(moving.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127
+        return contains(kept, new, ignore)
 
     def _presenter(self, frames_dir: Path, moving: np.ndarray | None) -> np.ndarray | None:
         """What to leave out of comparisons: where the presenter moves now,

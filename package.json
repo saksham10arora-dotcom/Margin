@@ -1,6 +1,6 @@
 {
   "name": "margin",
-  "version": "2.8.3",
+  "version": "2.8.4",
   "description": "Watch a lecture anywhere; Margin captures slides and speech and writes visual notes and a runnable notebook into your vault.",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "test:sidecar": "venv/bin/python -m pytest sidecar/tests -q",
     "sidecar": "./scripts/start.sh",
     "e2e": "node scripts/e2e/run.mjs",
-    "package": "./scripts/package-extension.sh"
+    "package": "./scripts/package-release.sh"
   },
   "devDependencies": {
     "puppeteer-core": "^24.43.1",

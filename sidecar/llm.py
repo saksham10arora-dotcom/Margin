@@ -247,7 +247,7 @@ def _gemini(prompt, pictures, max_tokens, temperature, progress=None, models=Non
             for k in load_api_keys(name)]
     keys = list(dict.fromkeys(keys))
     if not keys:
-        raise EngineError("no Gemini key (GEMINI_API_KEY) set")
+        raise EngineError("no Gemini key: add GEMINI_API_KEY in Margin's Settings")
     parts: list[dict] = [{"text": prompt}]
     for pic in pictures:
         parts.append({"text": f"[{pic.label}]"})
@@ -318,7 +318,7 @@ def _gemini(prompt, pictures, max_tokens, temperature, progress=None, models=Non
 def _openrouter(prompt, pictures, max_tokens, temperature, progress=None, quality="any"):
     keys = load_api_keys("OPENROUTER_API_KEY")
     if not keys:
-        raise EngineError("no OPENROUTER_API_KEY in ~/.config/keys.env")
+        raise EngineError("no OPENROUTER_API_KEY: add it in Margin's Settings")
     content: list[dict] = [{"type": "text", "text": prompt}]
     for pic in pictures:
         content.append({"type": "text", "text": f"[{pic.label}]"})
@@ -401,7 +401,7 @@ def _compatible_engine(spec: providers.EngineSpec):
         if spec.key:
             keys = load_api_keys(spec.key)
             if not keys:
-                raise EngineError(f"no {spec.key} in ~/.config/keys.env")
+                raise EngineError(f"no {spec.key}: add it in Margin's Settings")
             headers["Authorization"] = f"Bearer {keys[0]}"
         output = min(max_tokens, spec.max_output)
         text = prompt if (spec.vision or not pictures) else prompt + TEXT_ONLY
@@ -489,7 +489,7 @@ def _claude(prompt, pictures, max_tokens, temperature, progress=None, quality="a
     expires and cannot be refreshed without you. No token, no attempt."""
     tokens = load_api_keys("CLAUDE_CODE_OAUTH_TOKEN")
     if not tokens:
-        raise EngineError("no CLAUDE_CODE_OAUTH_TOKEN in ~/.config/keys.env (run `claude setup-token`)")
+        raise EngineError("no CLAUDE_CODE_OAUTH_TOKEN: run `claude setup-token` and add it in Margin's Settings")
     if _used_today("claude") >= CLAUDE_DAILY:
         raise EngineError(f"Claude has written {CLAUDE_DAILY} notes today, Margin's daily limit "
                           f"(MARGIN_CLAUDE_DAILY); it resumes tomorrow")

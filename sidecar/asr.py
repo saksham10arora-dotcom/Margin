@@ -27,7 +27,6 @@ from pathlib import Path
 
 MODEL_SEARCH = [
     Path.home() / ".margin" / "models",
-    Path.home() / ".jarvis" / "models",
     Path("/opt/homebrew/share/whisper-cpp"),
 ]
 # Best first. small.en is markedly better on technical vocabulary than base.en;

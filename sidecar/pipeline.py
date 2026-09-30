@@ -23,7 +23,7 @@ from sidecar import compose as C
 from sidecar import library
 from sidecar import notebook as NB
 from sidecar.config import AUTOLINK, MAX_AUTOLINKS_PER_SECTION
-from sidecar.llm import Busy, is_lite
+from sidecar.llm import Busy, EngineError, is_lite
 from sidecar.sessions import Session, all_sessions, course_sessions, load_session
 from sidecar.vault_linker import link_note_to_vault
 
@@ -140,6 +140,14 @@ def _work_through_queue() -> None:
         _run_guarded(session, vault, choice)
 
 
+def _a_model_is_ready() -> bool:
+    from sidecar import llm, providers
+    try:
+        return any(providers.entry_status(e)["ready"] for e in llm.chain_entries())
+    except Exception:  # noqa: BLE001 -- only picks the wording of an error
+        return True
+
+
 def _run_guarded(session: Session, vault: Path, choice: dict | None = None) -> None:
     try:
         while True:
@@ -157,7 +165,13 @@ def _run_guarded(session: Session, vault: Path, choice: dict | None = None) -> N
                            detail=str(e)[:600])
     except Exception as e:  # noqa: BLE001 -- surfaced to the panel, not swallowed
         logger.exception("Compose failed for %s", session.key)
-        session.set_status("error", str(e)[:600])
+        if isinstance(e, EngineError) and not _a_model_is_ready():
+            # Someone new, before setting up a model: tell them that, not
+            # every engine's reason for being skipped.
+            session.set_status("error", "Margin needs a model to write this note. Everything is captured: add one "
+                                        "in ... then Settings, then press Write notes now.", detail=str(e)[:600])
+        else:
+            session.set_status("error", str(e)[:600])
     finally:
         with _running_guard:
             _running.discard(session.key)

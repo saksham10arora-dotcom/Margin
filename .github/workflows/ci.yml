@@ -15,8 +15,9 @@ jobs:
         # Windows is included deliberately: the README claims macOS/Linux only,
         # and this is what turns that from a guess into a fact one way or the
         # other. A failure here is a real finding, not CI noise.
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.13"]
+        # What Margin supports: macOS and Linux, Python 3.11 (the minimum) to current.
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,15 +46,15 @@ jobs:
       - run: npm test
 
   package:
-    name: Package extension
+    name: Release zip
     runs-on: ubuntu-latest
-    needs: [extension]
+    needs: [backend, extension]
     steps:
       - uses: actions/checkout@v4
-      - name: Build the unpacked-extension zip
-        run: bash scripts/package-extension.sh
+      - name: Build the download (and refuse if a key is in it)
+        run: bash scripts/package-release.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: margin-extension
-          path: dist/*.zip
+          name: margin
+          path: dist/margin-*.zip
           if-no-files-found: error

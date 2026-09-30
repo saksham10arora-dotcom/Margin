@@ -28,8 +28,25 @@ mkdir -p "$VAULT" "$HOME/.margin"
 printf '%s\n' "$VAULT" > "$SAVED"
 export MARGIN_VAULT_PATH="$VAULT"
 
+# Lectures without captions are transcribed on this Mac by whisper.cpp, which
+# needs a speech model Homebrew does not include. Offered only when the tools
+# are there and no model is yet.
+has_model() {
+  for f in "$HOME"/.margin/models/ggml-*.bin /opt/homebrew/share/whisper-cpp/ggml-*.bin; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+WHISPER=""
+if command -v whisper-cli >/dev/null 2>&1 && command -v ffmpeg >/dev/null 2>&1 && ! has_model; then
+  bold "Lectures without captions"
+  echo "  Margin can transcribe them on this Mac with a speech model, a one-time download of about 490 MB."
+  read -r -p "  Download it now? [Y/n]: " ANSWER || true
+  case "${ANSWER:-y}" in [nN]*) echo "  Skipped. Later: ./scripts/setup.sh --whisper-model" ;; *) WHISPER="--whisper-model" ;; esac
+fi
+
 bold "Setting up"
-./scripts/setup.sh
+MARGIN_INSTALLING=1 ./scripts/setup.sh $WHISPER
 
 if [ "$(uname)" = "Darwin" ]; then
   bold "Starting it at login"
@@ -44,6 +61,10 @@ echo "  1. Turn on Developer mode (top right of the page that just opened)."
 echo "  2. Click Load unpacked and choose:"
 echo "       $(pwd)/extension"
 echo "  3. Open a Udemy or YouTube lecture. For your models: ... then Settings in the Margin panel."
+if ! command -v whisper-cli >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+  echo
+  echo "  For lectures without captions (optional): brew install ffmpeg whisper-cpp && ./scripts/setup.sh --whisper-model"
+fi
 if [ "$(uname)" = "Darwin" ]; then
   open -a "Google Chrome" "chrome://extensions" 2>/dev/null || true
   open -R "$(pwd)/extension/manifest.json" 2>/dev/null || true

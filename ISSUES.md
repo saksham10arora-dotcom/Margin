@@ -34,6 +34,9 @@ Written down so they are not rediscovered the hard way.
   whether the section ran.
 
 ## Platform
+- macOS and Linux. Windows is not supported. CI runs the sidecar's tests on
+  both, with Python 3.11 (the minimum) and 3.13; the installer's start-at-login
+  is macOS only (on Linux, `scripts/start.sh`).
 - Chrome and Chromium only (Edge, Brave, Arc should work unmodified; untested).
 - The end-to-end harness uses Chrome for Testing 131: newer builds on this Mac
   hang on headless screenshots, even of a blank page. YouTube also stops a

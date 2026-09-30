@@ -116,7 +116,10 @@ def _font(size):
             return ImageFont.truetype(name, size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    # Linux and Windows have neither: Pillow's own font, at the size asked for.
+    # Without the size it draws 10-pixel text, the slides come out nearly blank
+    # and every slide looks like every other (why CI on Linux failed).
+    return ImageFont.load_default(size)
 
 
 def _slide(title: str, bullets: list[str]) -> bytes:

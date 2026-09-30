@@ -39,6 +39,8 @@ the note (with the lecture's own diagram next to one it drew) and runs the code.
   the same note. Edits you make in Obsidian are never overwritten on Margin's own.
 - **Lectures you finished before Margin** get notes from their captions, one
   click in the Course tab.
+- **Flashcards for Anki** from any note: **⋯ → Export Anki flashcards** downloads a file
+  Anki imports as it is.
 - **A course, not a pile of files:** numbered notes linked previous and next, a
   course index, and YouTube playlists treated as courses.
 - **Any model you have.** A free Gemini key, a subscription you already pay for
@@ -85,8 +87,9 @@ And a settings page for keys, subscriptions and local models:
    [aistudio.google.com](https://aistudio.google.com/apikey).
 
 Needs Chrome (or Edge, Brave, Arc) and Python 3.11+ (the installer tells you how to
-get it). For lectures without captions, also `brew install ffmpeg whisper-cpp`:
-Margin then transcribes the audio on your Mac.
+get it). For lectures without captions, also `brew install ffmpeg whisper-cpp` before running the
+installer: it then offers the speech model (a one-time download of about 490 MB), and Margin
+transcribes the audio on your Mac. Installed them later? `./scripts/setup.sh --whisper-model`.
 
 ## Updating
 

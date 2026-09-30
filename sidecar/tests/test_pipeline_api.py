@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
 from sidecar import compose as C
-from sidecar import main, sessions
+from sidecar import llm, main, sessions
 from sidecar import notebook as NB
 
 CANNED = """<<<NOTE>>>
@@ -139,6 +139,20 @@ def test_capture_then_compose_produces_note_notebook_and_index(client):
 
     lectures = api.get("/course/1350350").json()["lectures"]
     assert lectures[0]["composed"] is True and lectures[0]["lecture_index"] == 28
+
+
+def test_someone_without_a_model_is_told_to_add_one_not_every_engines_reason(client, monkeypatch):
+    # A new user's first lecture ends before they have set up any model.
+    def no_model(prompt, pictures=None, **kw):
+        raise llm.EngineError("Every engine failed. gemini: no Gemini key | claude: no CLAUDE_CODE_OAUTH_TOKEN")
+    monkeypatch.setattr(C, "generate", no_model)
+    api, _ = client
+    key = api.post("/session", json={**META, "lecture_id": "first"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Today, expected return."}]})
+    api.post(f"/session/{key}/compose")
+    status = _wait_done(api, key)
+    assert status["state"] == "error"
+    assert status["message"].startswith("Margin needs a model") and "CLAUDE_CODE_OAUTH_TOKEN" not in status["message"]
 
 
 def test_compose_with_nothing_captured_fails_visibly(client):

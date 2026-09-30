@@ -2,7 +2,7 @@
 # One-time setup for Margin v2. Safe to re-run: every step checks first.
 #
 #   ./scripts/setup.sh                 sidecar env + notebook kernel + checks
-#   ./scripts/setup.sh --whisper-model also download a Whisper model (~150 MB)
+#   ./scripts/setup.sh --whisper-model also download a Whisper model (small.en, ~490 MB)
 #
 # Nothing here touches your own Python environments. The sidecar gets its own
 # venv in this folder; course notebooks run in ~/.margin/nbenv, registered as
@@ -69,6 +69,9 @@ else
 fi
 
 say "Done."
-echo "  Start the sidecar:  ./scripts/start.sh"
-echo "  Load the extension: chrome://extensions → Developer mode → Load unpacked → $(pwd)/extension"
-echo "  Optional, start at login: ./scripts/login-item.sh install"
+# install.sh gives its own next steps; these are for running this script alone.
+if [ -z "${MARGIN_INSTALLING:-}" ]; then
+  echo "  Start the sidecar:  ./scripts/start.sh"
+  echo "  Load the extension: chrome://extensions → Developer mode → Load unpacked → $(pwd)/extension"
+  echo "  Optional, start at login: ./scripts/login-item.sh install"
+fi
