@@ -103,7 +103,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.9.2"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once
+VERSION = "2.9.3"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(

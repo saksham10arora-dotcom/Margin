@@ -30,11 +30,20 @@ build_app() {
   local path_env="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin"
   local script="$HOME/.margin/sidecar-launcher.applescript"
   mkdir -p "$HOME/Applications" "$HOME/.margin"
+  local old=""
+  [ -f "$script" ] && old="$(cat "$script")"
   cat >"$script" <<APPLESCRIPT
 on run
 	do shell script "if ! /usr/bin/curl -s --max-time 2 http://127.0.0.1:$PORT/health >/dev/null; then export MARGIN_VAULT_PATH=" & quoted form of "$vault" & "; export MARGIN_PORT=$PORT; export PATH=" & quoted form of "$path_env" & "; nohup " & quoted form of "$ROOT/scripts/start.sh" & " >> " & quoted form of "$LOG" & " 2>&1 & fi"
 end run
 APPLESCRIPT
+  # Unchanged since last time: keep the app as it is. A rebuilt app is a new app
+  # to macOS, which asks again for access to the folder Margin is in, and until
+  # someone clicks Allow the sidecar cannot start (an update left it stopped).
+  if [ -d "$APP" ] && [ "$old" = "$(cat "$script")" ]; then
+    echo "Launcher unchanged, kept (macOS keeps the access you gave it)."
+    return
+  fi
   rm -rf "$APP"
   osacompile -o "$APP" "$script"
   # Hidden: no Dock icon, no menu bar, it only ever runs for a moment.

@@ -1,6 +1,6 @@
 {
   "name": "margin",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "description": "Watch a lecture anywhere; Margin captures slides and speech and writes visual notes and a runnable notebook into your vault.",
   "private": true,
   "type": "module",
