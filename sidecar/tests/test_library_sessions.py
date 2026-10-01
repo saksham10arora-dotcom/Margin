@@ -529,3 +529,50 @@ def test_a_picture_revealed_on_a_slide_is_in_the_picture_kept(tmp_path):
     s.add_frame(20, _board(BOARD, picture=True))
     assert len(s.frames) == 1
     assert s.frame_bytes(s.frames[0]["id"]) == _board(BOARD, picture=True)
+
+
+# --- a nine-hour lecture -------------------------------------------------------------
+
+def _long_lecture(tmp_path, hours=9):
+    s = open_session(UDEMY, root=tmp_path)
+    cues = [{"start": t, "end": t + 9, "text": f"point {t} " + "word " * 8} for t in range(0, hours * 3600, 10)]
+    s.set_caption_cues(cues, "youtube-captions")
+    return s
+
+
+def test_a_short_lecture_goes_to_the_note_whole(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.set_caption_cues([{"start": 0, "end": 5, "text": "Expected return."}], "youtube-captions")
+    assert s.transcript_for_note(1000) == s.transcript_text()
+
+
+def test_a_long_lecture_keeps_what_you_watched_whole_and_thins_the_rest_evenly(tmp_path):
+    # A nine-hour one-shot is far over what a note is written from. It used to
+    # keep the first and last hour and drop the seven between, whatever you had
+    # watched; the note jumped from chapter 1 to the last chapters.
+    s = _long_lecture(tmp_path)
+    s.mark_watched(4 * 3600, 4 * 3600 + 1800)  # half an hour in the middle
+    text = s.transcript_for_note(120_000)
+    assert len(text) <= 120_000 + 2000
+    assert all(f"point {t} " in text for t in range(4 * 3600 + 10, 4 * 3600 + 1790, 10))  # watched: all of it
+    for hour in (0, 2, 6, 8):  # the rest: stretches from across the whole lecture
+        assert any(f"point {t} " in text for t in range(hour * 3600, (hour + 1) * 3600, 10))
+    assert "left out" in text
+
+
+def test_watching_more_of_a_long_lecture_makes_its_note_out_of_date(tmp_path):
+    s = _long_lecture(tmp_path)
+    s.mark_watched(0, 600)
+    s.mark_composed(s.material_rev)
+    assert not s.stale
+    s.mark_watched(3 * 3600, 3 * 3600 + 300)  # a new part: the note can now say more
+    assert s.stale
+
+
+def test_watching_more_of_a_short_lecture_changes_nothing(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.set_caption_cues([{"start": t, "end": t + 9, "text": "word " * 5} for t in range(0, 600, 10)], "youtube-captions")
+    s.mark_watched(0, 120)
+    s.mark_composed(s.material_rev)
+    s.mark_watched(120, 500)  # the note was written from all of it already
+    assert not s.stale

@@ -33,7 +33,7 @@ from sidecar.llm import Picture, generate
 from sidecar.sessions import Session, format_ts
 
 MAX_SLIDES = 24
-MAX_TRANSCRIPT_CHARS = 120_000  # ~2h of speech; longer lectures are trimmed evenly
+MAX_TRANSCRIPT_CHARS = 120_000  # ~2h of speech; longer: what you watched whole, the rest thinned
 
 # The crux of a lecture, the 80/20 of it: asked for with the note (a CRUX
 # block), and on its own for a note written before there was one (study.py).
@@ -121,6 +121,11 @@ def build_prompt(meta: dict, transcript: str, transcript_source: str | None,
     else:
         source_note = ("There is NO transcript for this lecture. Work from the slides alone and say "
                        "less rather than inventing what the lecturer said.")
+    if "left out ...]" in transcript:
+        source_note += (" This lecture is too long to give whole: the parts the viewer watched are in full, "
+                        "the rest is thinned, and [... left out ...] marks what is missing. Give the watched "
+                        "parts the depth, use the rest to place them in the lecture, and never fill in what "
+                        "a left-out part said.")
 
     resources = _resource_lines(meta)
     if repo_notebook:
@@ -433,13 +438,8 @@ def parse_response(raw: str) -> tuple[str, str, list[dict]]:
 def compose(session: Session, previous_gist: str | None = None, progress=None,
             quality: str = "any", choice: dict | None = None) -> Composition:
     meta = session.meta
-    transcript = session.transcript_text()
-    if len(transcript) > MAX_TRANSCRIPT_CHARS:
-        # Keep the start and end whole and thin the middle, rather than
-        # silently dropping the end of a long lecture.
-        head = transcript[: MAX_TRANSCRIPT_CHARS // 2]
-        tail = transcript[-MAX_TRANSCRIPT_CHARS // 2:]
-        transcript = head + "\n[... middle of the lecture trimmed for length ...]\n" + tail
+    # A lecture too long to send whole: what you watched whole, the rest thinned.
+    transcript = session.transcript_for_note(MAX_TRANSCRIPT_CHARS)
 
     slides = select_slides(session.frames)
     pictures = []

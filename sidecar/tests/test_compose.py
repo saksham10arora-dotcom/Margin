@@ -210,3 +210,11 @@ def test_a_code_topic_heading_is_not_a_marker():
 def test_a_note_with_no_markers_is_all_note():
     note, gist, cells = C.parse_response("## Topic\nThe NOTE on this is short.\nEND")
     assert note.startswith("## Topic") and gist == "" and cells == []
+
+
+def test_a_thinned_transcript_is_explained_to_the_model():
+    thinned = C.build_prompt(META, "[00:10] Expected return.\n[... 02:00 to 40:00 left out ...]\n[40:00] Risk.",
+                             "youtube-captions", [], None, None)
+    assert "Give the watched parts the depth" in thinned
+    whole = C.build_prompt(META, "[00:10] Expected return.", "youtube-captions", [], None, None)
+    assert "left out" not in whole

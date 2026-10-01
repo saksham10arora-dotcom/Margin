@@ -52,6 +52,12 @@ INK_DELTA = 40          # grey levels from the background that count as a mark
 KEEP_TO_CONTAIN = 0.92  # share of the earlier ink that must survive
 NEW_SPEECH_SECONDS = 3.0  # transcribed speech outside what was heard before that counts as new
 BLANK_INK = 0.002       # less ink than this is an empty frame
+# What a note is written from: about two hours of speech. A longer lecture (a
+# nine-hour one-shot) used to keep its first and last hour and drop the rest,
+# whatever you had watched. Now what you watched goes in whole and the rest is
+# thinned evenly, in stretches long enough to follow.
+NOTE_TRANSCRIPT_CHARS = 120_000
+STRETCH_SECONDS = 120   # the transcript is kept or left out in stretches this long
 # A capture is the same slide built further only if (almost) none of the
 # earlier one's marks are gone. Measured against the whole image as well as
 # the earlier ink: on a slide that is mostly a fixed illustration, a new title
@@ -564,17 +570,66 @@ class Session:
         cues = self.cues
         return cues[0]["source"] if cues else None
 
-    def transcript_text(self, every: float = 30.0) -> str:
+    def transcript_text(self, every: float = 30.0, cues: list[dict] | None = None) -> str:
         """Cue text with a [mm:ss] marker roughly every `every` seconds, so the
         composer can place timestamps without drowning in one per sentence."""
         out: list[str] = []
         next_marker = 0.0
-        for cue in self.cues:
+        for cue in self.cues if cues is None else cues:
             if cue["start"] >= next_marker:
                 out.append(f"\n[{format_ts(cue['start'])}] ")
                 next_marker = cue["start"] + every
             out.append(cue["text"] + " ")
         return "".join(out).strip()
+
+    def _stretches(self) -> list[tuple[float, list[dict], bool]]:
+        """The transcript in STRETCH_SECONDS pieces: (start, cues, watched)."""
+        watched = self.watched
+        pieces: dict[int, list[dict]] = {}
+        for cue in self.cues:
+            pieces.setdefault(int(cue["start"] // STRETCH_SECONDS), []).append(cue)
+        out = []
+        for i in sorted(pieces):
+            a, b = i * STRETCH_SECONDS, (i + 1) * STRETCH_SECONDS
+            seen = any(lo < b and hi > a for lo, hi in watched)
+            out.append((a, pieces[i], seen))
+        return out
+
+    def transcript_for_note(self, limit: int = NOTE_TRANSCRIPT_CHARS) -> str:
+        """The transcript a note is written from, about `limit` characters at
+        most. Whole when it fits. When it does not (a nine-hour one-shot), what
+        you watched goes in whole and the rest is thinned evenly: whole
+        stretches spread across the lecture, so the note covers what you
+        watched and still sees how the lecture fits together. More than
+        `limit` watched: that is thinned evenly too."""
+        full = self.transcript_text()
+        if len(full) <= limit:
+            return full
+        pieces = [(a, cues, seen, len(self.transcript_text(cues=cues))) for a, cues, seen in self._stretches()]
+        seen_chars = sum(n for *_, seen, n in pieces if seen)
+        keep = set()
+        if seen_chars >= limit:
+            step = -(-seen_chars // limit)  # ceil
+            keep = {i for j, i in enumerate(i for i, p in enumerate(pieces) if p[2]) if j % step == 0}
+        else:
+            keep = {i for i, p in enumerate(pieces) if p[2]}
+            rest = [i for i, p in enumerate(pieces) if not p[2]]
+            rest_chars = sum(pieces[i][3] for i in rest)
+            if rest:
+                step = max(1, -(-rest_chars // (limit - seen_chars)))
+                keep |= {i for j, i in enumerate(rest) if j % step == step // 2}
+        out, gap_from = [], None
+        for i, (a, cues, seen, _) in enumerate(pieces):
+            if i in keep:
+                if gap_from is not None:
+                    out.append(f"[... {format_ts(gap_from)} to {format_ts(a)} left out ...]")
+                    gap_from = None
+                out.append(self.transcript_text(cues=cues))
+            elif gap_from is None:
+                gap_from = a
+        if gap_from is not None:
+            out.append(f"[... {format_ts(gap_from)} to the end left out ...]")
+        return "\n".join(out)
 
     # --- frames -------------------------------------------------------------
 
@@ -781,10 +836,22 @@ class Session:
     def mark_watched(self, start: float, end: float) -> list[list[float]]:
         with _lock_for(self.key):
             ranges = self._read("watched.json", [])
+            before = merge_ranges(ranges)
             ranges.append([start, end])
             merged = merge_ranges(ranges)
             self._write("watched.json", merged)
+            # A lecture too long for its note to hold whole is written from what
+            # you watched: a part watched for the first time makes it out of date.
+            if self._new_stretch(before, merged) and len(self.transcript_text()) > NOTE_TRANSCRIPT_CHARS:
+                self._bump()
             return merged
+
+    @staticmethod
+    def _new_stretch(before: list[list[float]], after: list[list[float]]) -> bool:
+        def stretches(ranges):
+            return {i for lo, hi in ranges for i in range(int(lo // STRETCH_SECONDS), int(hi // STRETCH_SECONDS) + 1)
+                    if min(hi, (i + 1) * STRETCH_SECONDS) - max(lo, i * STRETCH_SECONDS) >= 30}
+        return bool(stretches(after) - stretches(before))
 
     @property
     def watched(self) -> list[list[float]]:

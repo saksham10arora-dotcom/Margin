@@ -49,8 +49,12 @@ Written down so they are not rediscovered the hard way.
 - **Whisper base.en mishears technical words** ("weights must sound to one").
   The composer corrects most of it from the slides and context. `small.en`
   (`./scripts/setup.sh --whisper-model`) is noticeably better.
-- **Very long lectures** send at most 24 slides, spread evenly, and trim the
-  middle of a transcript over ~120k characters.
+- **Very long lectures** (a nine-hour one-shot) send at most 24 slides, spread
+  evenly. Their transcript is over what a note is written from (~120k
+  characters, about two hours of speech): the parts you watched go in whole and
+  the rest is thinned evenly, whole two-minute stretches from across the
+  lecture. Watching a new part marks the note out of date, so it grows as you
+  watch. (Before 2.10.3 the first and last hour were kept and the rest dropped.)
 - **Ask the lecture** answers from the transcript and the note; for a lecture
   with no transcript it has only the note. Each question, like each set of
   flashcards, is one request to the first model in your order.
