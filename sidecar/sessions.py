@@ -86,8 +86,19 @@ SHADE_SPREAD = 24           # max - min of R, G, B: grey enough to be the hand's
 MAX_SHIFT = 16              # thumbnail pixels either way (about a sixth of the height)
 MORE_WRITING = 0.05         # a capture folded into a kept one replaces it with this much more writing
 MORE_WRITING_MIN = 20       # and at least this many more thumbnail pixels of it
-LOST_WORD = 40              # FINE_SIZE pixels missing in one cluster: a word, not specks of noise
+LOST_WORD = 20              # FINE_SIZE pixels missing in one cluster: a word, not specks of noise
 REGIONS = (6, 4)            # columns and rows of FINE_SIZE regions, each lined up on its own
+# A teacher in front of a projected slide: a whole person who walks across it,
+# writes on it, and on a see-through board leaves a faint ghost behind the
+# text. Where two captures of one slide differ because of them, the difference
+# is solid and comes in from the frame's edge; a new slide differs in strokes
+# (letters, lines) all over it. So a solid difference from the edge is left
+# out, and slides are compared by their strokes: a person, a ghost, a shadow or
+# an animated block is thick, and counts neither for nor against a slide.
+IN_FRONT_MIN = 0.01         # share of the frame a solid difference must cover to be someone in front
+IN_FRONT_MAX = 0.5          # beyond this it is not someone in front of the slide but a new one
+MORE_PICTURE = 0.01         # share of the frame of new solid content (a picture appearing) that makes a capture fuller
+MIN_STROKES = 0.006         # less text or writing than this and a capture is compared by its picture
 REGION_SLACK = 2            # pixels either way a region may move: a page bending, not a new word
 
 _locks: dict[str, threading.Lock] = {}
@@ -288,21 +299,70 @@ def best_shift(moving: np.ndarray, still: np.ndarray) -> tuple[int, int]:
     return int(dy) - MAX_SHIFT, int(dx) - MAX_SHIFT
 
 
+def in_front(a: np.ndarray, b: np.ndarray) -> np.ndarray | None:
+    """Where something stands in front of the slide in one capture and not the
+    other: solid differences coming in from the frame's edge, with what they
+    hold or point with and their faint edges."""
+    if a.shape != b.shape or a.ndim != 3:
+        return None
+    diff = _difference(a, b) >= INK_DELTA
+    solid = _grow(_shrink(diff, 2), 2) & diff
+    h, w = solid.shape
+    area = np.zeros(solid.shape, dtype=bool)
+    for y0, y1, x0, x1 in _blobs(solid):
+        part = solid[y0:y1, x0:x1]
+        if part.sum() >= IN_FRONT_MIN * solid.size and (y0 == 0 or x0 == 0 or y1 == h or x1 == w):
+            area[y0:y1, x0:x1] |= part
+    if not area.any() or area.mean() > IN_FRONT_MAX:
+        return None
+    for _ in range(PEN_REACH):
+        area = area | (_grow(area, 1) & diff)
+    return _grow(area, HAND_PAD)
+
+
+def adds_picture(new: np.ndarray, kept: np.ndarray, front: np.ndarray | None) -> bool:
+    """Does `new` show solid content `kept` lacks (a picture that appeared),
+    not counting what stands in front? Slides are compared by their strokes,
+    so this is what keeps a revealed picture in the slide's picture."""
+    if new.shape != kept.shape or new.ndim != 3:
+        return False
+    ink = ink_mask(new)
+    extra = ink & ~strokes(new) & (_difference(kept, new) >= INK_DELTA)
+    if front is not None:
+        extra &= ~front
+    return extra.sum() > MORE_PICTURE * extra.size
+
+
+def clearer(new: np.ndarray, kept: np.ndarray, front: np.ndarray | None) -> bool:
+    """Is less of the slide covered in `new` where someone stood in front? The
+    person is drawn in the capture they stand in; the other shows the slide."""
+    if front is None or new.shape != kept.shape:
+        return False
+    covered_new = int((ink_mask(new) & front).sum())
+    covered_kept = int((ink_mask(kept) & front).sum())
+    return covered_new * 2 < covered_kept
+
+
 def covers(bigger: np.ndarray, smaller: np.ndarray, moving: np.ndarray | None = None):
-    """Does `bigger` show everything written on `smaller`, leaving out the
-    presenter (`moving`) and a writer's hand? None if not; else how the two
-    were compared: (dy, dx, left out), to look again at the same alignment."""
+    """Does `bigger` show every stroke on `smaller` (its text, writing and
+    lines), leaving out the presenter (`moving`), a writer's hand and whoever
+    stands in front? None if not; else how the two were compared: (dy, dx,
+    what stood in front), to look again at the same alignment."""
     hand_b = hand_area(bigger)
-    skip = _either(moving, hand_b, hand_area(smaller))
-    if skip is not None:
-        # Not blank but hidden, by a hand or a face: this says nothing. Counted
-        # in writing, as what stays in view besides (a table's edge, a shadow)
-        # is in every capture and would make any two pages look alike.
+    front = _either(moving, hand_b, hand_area(smaller), in_front(bigger, smaller))
+    if front is not None:
+        # Not blank but hidden, by a hand, a face or a person: this says
+        # nothing. Counted in writing, as what stays in view besides (a table's
+        # edge, a shadow) is in every capture and would make any two pages alike.
         marks = strokes(smaller)
-        if (marks & ~skip).sum() < BLANK_INK * marks.size <= marks.sum():
+        if (marks & ~front).sum() < BLANK_INK * marks.size <= marks.sum():
             return None
-    if contains(bigger, smaller, skip):
-        return 0, 0, skip
+    # Compared by its strokes when it has text or writing; a slide that is a
+    # picture only is compared by its picture.
+    marks = strokes(smaller)
+    thick = ink_mask(smaller) & ~marks if marks.sum() >= MIN_STROKES * marks.size else None
+    if contains(bigger, smaller, _either(front, thick)):
+        return 0, 0, front
     if bigger.shape != smaller.shape or bigger.ndim != 3:
         return None
     dy, dx = best_shift(bigger, smaller)
@@ -312,13 +372,13 @@ def covers(bigger: np.ndarray, smaller: np.ndarray, moving: np.ndarray | None = 
     ink = ink_mask(smaller)
     # A moved page: only its writing has to survive. What is thick (the table's
     # edge, a shadow, a black bar) stays in place while the page moves.
-    skip = _either(moving, hand_area(smaller), None if hand_b is None else _shifted(hand_b, dy, dx, False),
-                   ink & ~strokes(smaller))
+    front = _either(moving, hand_area(smaller), None if hand_b is None else _shifted(hand_b, dy, dx, False))
+    skip = _either(front, thick)
     # Too little writing left to line up on: that says nothing, and an almost
     # empty capture must not pass for part of whatever page came next.
-    if (ink & ~skip).sum() < BLANK_INK * ink.size:
+    if (ink if skip is None else ink & ~skip).sum() < BLANK_INK * ink.size:
         return None
-    return (dy, dx, skip) if contains(moved, smaller, skip) else None
+    return (dy, dx, front) if contains(moved, smaller, skip) else None
 
 
 def writing(thumb: np.ndarray) -> int:
@@ -341,37 +401,32 @@ def _fine(image: Image.Image) -> np.ndarray:
     return np.asarray(image.convert("RGB").resize(FINE_SIZE, Image.BILINEAR), dtype=np.int16)
 
 
-def _far_by_region(bigger: np.ndarray, smaller: np.ndarray, ink: np.ndarray) -> np.ndarray:
-    """Where `smaller`'s marks are missing from `bigger`, each region of the
-    picture lined up on its own within a couple of pixels: filmed paper bends
-    and a camera refocuses, so one shift never fits the whole page, while a
-    slide, which does not bend, lines up everywhere at once. Pixel for pixel
-    within a region, so a different word stays different."""
-    h, w = smaller.shape[:2]
+def _missing_by_region(strokes_: np.ndarray, there: np.ndarray) -> np.ndarray:
+    """Which of `strokes_` have no ink of the other capture under them, each
+    region of the picture lined up on its own within a couple of pixels:
+    filmed paper bends and a camera refocuses, so one shift never fits the
+    whole frame, while a slide lines up everywhere at once. Exact within a
+    region, so a different word is still missing."""
+    h, w = strokes_.shape
     r = REGION_SLACK
-    padded = np.pad(bigger, ((r, r), (r, r), (0, 0)), constant_values=-1000)
-    far = np.zeros((h, w), dtype=bool)
+    padded = np.pad(there, r, constant_values=False)
+    missing = np.zeros((h, w), dtype=bool)
     ys = np.linspace(0, h, REGIONS[1] + 1, dtype=int)
     xs = np.linspace(0, w, REGIONS[0] + 1, dtype=int)
     for y0, y1 in zip(ys[:-1], ys[1:]):
         for x0, x1 in zip(xs[:-1], xs[1:]):
-            marks = ink[y0:y1, x0:x1]
+            marks = strokes_[y0:y1, x0:x1]
             if not marks.any():
                 continue
-            part = smaller[y0:y1, x0:x1]
             best = None
             for a in range(-r, r + 1):
                 for b in range(-r, r + 1):
-                    lost = (_difference(padded[y0 + r - a:y1 + r - a, x0 + r - b:x1 + r - b], part) >= INK_DELTA) & marks
+                    lost = marks & ~padded[y0 + r - a:y1 + r - a, x0 + r - b:x1 + r - b]
                     n = int(lost.sum())
                     if best is None or n < best[0]:
                         best = (n, lost)
-                    if n == 0:
-                        break
-                if best[0] == 0:
-                    break
-            far[y0:y1, x0:x1] = best[1]
-    return far
+            missing[y0:y1, x0:x1] = best[1]
+    return missing
 
 
 def _word_sized(lost: np.ndarray) -> bool:
@@ -383,23 +438,27 @@ def _word_sized(lost: np.ndarray) -> bool:
 
 
 def _sharp(bigger: np.ndarray, smaller: np.ndarray, match: tuple) -> bool:
-    """`covers`, looked at again at FINE_SIZE, where letters are letters: with
-    the same area left out, each region lined up to the pixel, and a
-    word-sized loss (in thin strokes: shading on filmed paper shifts with the
-    camera's exposure) counted as a loss."""
-    dy, dx, skip = match
-    ink = ink_mask(smaller)
-    if skip is not None:
-        ink &= ~(np.asarray(Image.fromarray(skip.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127)
-    marks = int(ink.sum())
-    if marks < BLANK_INK * ink.size:
+    """`covers`, looked at again at FINE_SIZE, where letters are letters: is
+    there ink of `bigger` under every stroke of `smaller` (each against its own
+    background, so a ghost or a lit presenter that changes the brightness of
+    text still there does not count), with what stood in front left out, each
+    region lined up on its own, and a word-sized loss counted as a loss."""
+    dy, dx, front = match
+    marks = strokes(smaller)
+    if marks.sum() < MIN_STROKES * marks.size:
+        marks = ink_mask(smaller)  # a picture-only slide: its picture is what must be there
+    if front is not None:
+        marks &= ~(np.asarray(Image.fromarray(front.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127)
+    total = int(marks.sum())
+    if total < BLANK_INK * marks.size:
         return True
-    writing = strokes(smaller) & ink
     scale = FINE_SIZE[0] // THUMB_SIZE[0]
-    moved = _shifted(bigger, dy * scale, dx * scale, -1000) if (dy or dx) else bigger
-    far = _far_by_region(moved, smaller, ink)
-    lost = int(far.sum())
-    return lost <= (1 - KEEP_TO_CONTAIN) * marks and lost <= LOST_OF_IMAGE * ink.size and not _word_sized(far & writing)
+    there = ink_mask(bigger)
+    if dy or dx:
+        there = _shifted(there, dy * scale, dx * scale, False)
+    missing = _missing_by_region(marks, there)
+    lost = int(missing.sum())
+    return lost <= (1 - KEEP_TO_CONTAIN) * total and lost <= LOST_OF_IMAGE * marks.size and not _word_sized(missing)
 
 
 def unpack_moving(packed: str | None) -> np.ndarray | None:
@@ -573,7 +632,7 @@ class Session:
                     # of it: around a writer's hand nothing counts, so the newest
                     # line, still under the pen, or a page no longer behind the
                     # hand, arrives this way. Then it is the better picture.
-                    if shows_more(thumb, other):
+                    if shows_more(thumb, other) or adds_picture(thumb, other, inside[2]) or clearer(thumb, other, inside[2]):
                         return self._replace(frames, frame, t, jpeg, image, thumb)
                     if outside is not None and (t < frame["t"] or t > frame["t_last"]):
                         frame["t"] = min(frame["t"], t)

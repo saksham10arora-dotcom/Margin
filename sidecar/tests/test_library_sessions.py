@@ -475,3 +475,57 @@ def test_titles_of_the_same_length_are_still_different_slides(tmp_path):
     s.add_frame(10, _slide("Risk", A))
     s.add_frame(40, _slide("Rain", A))
     assert [f["t"] for f in s.frames] == [10, 40]
+
+
+# --- a teacher in front of a projected slide --------------------------------------
+
+BOARD = ["An algorithm is a finite sequence", "of well-defined instructions", "to solve a class of problems"]
+
+
+def _board(lines, person=None, marks=0, picture=False) -> bytes:
+    """A dark smart-board slide with light text, red annotation underlines, and
+    the teacher (lit face and hands, dark shirt) standing in front of it."""
+    img = Image.new("RGB", (1280, 720), (22, 30, 40))
+    d = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        d.text((90, 120 + i * 90), line, fill=(225, 230, 235), font=_font(48))
+    for i in range(marks):
+        d.line([90, 180 + i * 90, 700, 182 + i * 90], fill=(220, 40, 40), width=5)
+    if picture:
+        d.rectangle([300, 420, 760, 660], fill=(60, 120, 220))
+    if person is not None:
+        x = person
+        d.rectangle([x - 150, 330, x + 150, 720], fill=(30, 45, 95))      # shirt, to the bottom edge
+        d.ellipse([x - 70, 150, x + 70, 330], fill=(205, 150, 120))       # face
+        d.ellipse([x - 230, 420, x - 150, 500], fill=(205, 150, 120))     # a hand
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
+def test_a_teacher_walking_in_front_of_a_slide_is_still_one_slide(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _board(BOARD, person=1100))
+    s.add_frame(20, _board(BOARD, person=820))
+    s.add_frame(30, _board(BOARD, person=1150, marks=1))  # and underlined a line
+    s.add_frame(40, _board(BOARD, marks=1))
+    assert len(s.frames) == 1
+    assert s.frame_bytes(s.frames[0]["id"]) == _board(BOARD, marks=1)
+
+
+def test_a_new_slide_behind_the_teacher_is_a_new_slide(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _board(BOARD, person=1100))
+    s.add_frame(40, _board(["Will accept zero or more input", "but generate at least one output"], person=1080))
+    assert [f["t"] for f in s.frames] == [10, 40]
+
+
+def test_a_picture_revealed_on_a_slide_is_in_the_picture_kept(tmp_path):
+    # Thick shapes count less than strokes when slides are compared (a person,
+    # a shadow), but a picture that appears is content: the slide's picture
+    # must be the one that shows it.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _board(BOARD))
+    s.add_frame(20, _board(BOARD, picture=True))
+    assert len(s.frames) == 1
+    assert s.frame_bytes(s.frames[0]["id"]) == _board(BOARD, picture=True)

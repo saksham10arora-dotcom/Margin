@@ -39,6 +39,13 @@ Written down so they are not rediscovered the hard way.
   and a capture that shows writing no other capture shows is always kept. A 10
   minute handwritten lecture kept 47 captures before 2.10.1 and keeps about 15
   now; a page taller than the frame keeps a view of each part of it.
+- **A teacher in front of a projected slide** (a smart board, a see-through
+  board with the teacher's ghost behind the text): someone standing in front is
+  left out of comparisons, and slides are compared by their strokes (text,
+  lines, writing), so the person, the ghost and shading count neither way. A
+  classroom lecture kept about half as many captures (123 to 59 live, 40 when
+  folded again). Still kept separately: a slide whose annotations were wiped
+  (writing disappeared), and animated content that changes between captures.
 - **Whisper base.en mishears technical words** ("weights must sound to one").
   The composer corrects most of it from the slides and context. `small.en`
   (`./scripts/setup.sh --whisper-model`) is noticeably better.
