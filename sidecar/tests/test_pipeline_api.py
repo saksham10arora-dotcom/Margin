@@ -443,3 +443,30 @@ def test_the_menu_endpoints(client, monkeypatch):
     assert api.get("/providers/nope/models").status_code == 400
     monkeypatch.setattr("sidecar.llm.test_choice", lambda c: {"ok": True, "model": c["model"], "seconds": 0.4})
     assert api.post("/providers/test", json={"provider": "groq", "model": "m"}).json()["ok"] is True
+
+
+def test_closing_the_tab_writes_the_note_only_when_it_needs_it(client):
+    # The tab closing is Margin's own decision, like moving to the next lecture:
+    # a first note once most of the lecture was watched, an update when
+    # something new came in, and never over a note you edited.
+    api, vault = client
+    key = api.post("/session", json=META).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Expected return."}]})
+    api.post(f"/session/{key}/frame", json={"t": 12.5, "data": _jpeg()})
+    closing = {"auto": True, "if_needed": True}
+
+    api.post(f"/session/{key}/watched", json={"start": 0, "end": 60})  # a few minutes of it
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is False
+
+    api.post(f"/session/{key}/watched", json={"start": 60, "end": 300})  # most of it
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is True
+    assert _wait_done(api, key)["state"] == "done"
+
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is False  # nothing new
+    img = Image.new("RGB", (640, 360), "white")
+    ImageDraw.Draw(img).ellipse([300, 150, 600, 330], fill="darkred")
+    buf = io.BytesIO()
+    img.save(buf, "JPEG")
+    api.post(f"/session/{key}/frame", json={"t": 200, "data": base64.b64encode(buf.getvalue()).decode()})
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is True  # a new slide
+    assert _wait_done(api, key)["state"] == "done"

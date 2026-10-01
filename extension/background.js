@@ -29,6 +29,11 @@ async function handle(msg, sender) {
       return captureTab(sender);
     case 'fetch-text':
       return fetchCaptionText(msg.url);
+    case 'lecture-state':
+      return rememberLecture(sender.tab?.id, msg);
+    case 'close-lecture':
+      await rememberLecture(sender.tab?.id, {});
+      return closeLecture(msg);
     case 'open-settings': {
       const hash = typeof msg.hash === 'string' && /^[\w=.-]*$/.test(msg.hash) ? msg.hash : '';
       await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (hash ? `#${hash}` : '') });
@@ -43,6 +48,38 @@ async function handle(msg, sender) {
     default:
       return { ok: false, error: `unknown message ${msg?.type}` };
   }
+}
+
+// What each tab is watching, kept in session storage (it outlives this worker
+// going to sleep): closing a tab often gives the page no chance to say
+// anything, but this worker hears every tab close, and finishes for it.
+async function rememberLecture(tabId, state) {
+  if (tabId === undefined) return { ok: false };
+  const id = `lecture:${tabId}`;
+  if (state?.key) await chrome.storage.session.set({ [id]: { key: state.key, range: state.range, duration: state.duration, write: state.write } });
+  else await chrome.storage.session.remove(id);
+  return { ok: true };
+}
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const id = `lecture:${tabId}`;
+  const state = (await chrome.storage.session.get(id))[id];
+  await chrome.storage.session.remove(id);
+  if (state) await closeLecture(state);
+});
+
+// The tab closed, or Margin's panel: the page cannot wait for anything, so this
+// worker, which outlives it, records the last stretch watched and only then
+// asks the sidecar to write or update the note. The sidecar decides whether it
+// needs it (something new since, and a note you have not edited).
+async function closeLecture({ key, range, duration, write }) {
+  if (typeof key !== 'string' || !/^[\w.-]+$/.test(key)) return { ok: false };
+  const base = `/session/${encodeURIComponent(key)}`;
+  if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+    await sidecarJson('POST', `${base}/watched`, { start: range[0], end: range[1], duration_sec: duration ?? null });
+  }
+  if (write) await sidecarJson('POST', `${base}/compose`, { auto: true, if_needed: true });
+  return { ok: true };
 }
 
 async function sidecarJson(method, path, body) {

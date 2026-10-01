@@ -103,7 +103,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.10.3"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched
+VERSION = "2.10.4"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -297,6 +297,24 @@ class EngineChoice(BaseModel):
 class ComposeRequest(BaseModel):
     auto: bool = False  # Margin's own decision (a lecture ended), not your button
     engine: EngineChoice | None = None
+    # The tab closed: the page is gone and cannot judge, so the sidecar does.
+    if_needed: bool = False
+
+
+# Leaving a lecture writes its first note once you watched this much of it,
+# the same as moving on to the next lecture in the panel.
+FIRST_NOTE_ON_LEAVING = 0.75
+
+
+def _worth_writing(session, vault_path: Path) -> bool:
+    """Margin's rule for writing a note as you leave a lecture: a first note
+    once most of it was watched, an update when something new came in since
+    (a slide, speech not heard before, a new part of a long lecture)."""
+    if not (session.frames or session.cues):
+        return False
+    if library.lecture_note_path(vault_path, session.meta).exists():
+        return session.stale
+    return session.coverage() >= FIRST_NOTE_ON_LEAVING
 
 
 @app.post("/session/{key}/compose")
@@ -305,6 +323,8 @@ def post_compose(key: str, request: ComposeRequest | None = None,
     session = _session_or_404(key)
     if request and request.auto and pipeline.note_edited(session, vault_path):
         return {"started": False, "skipped": "edited", "status": session.status}
+    if request and request.if_needed and not _worth_writing(session, vault_path):
+        return {"started": False, "skipped": "nothing new", "status": session.status}
     choice = request.engine.as_dict() if request and request.engine else None
     started = pipeline.start(session, vault_path, choice)
     return {"started": started, "status": session.status}

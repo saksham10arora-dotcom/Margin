@@ -61,6 +61,7 @@ class MarginApp {
   reset() {
     this.meta = null;
     this.session = null;
+    this.handedOff = false;
     this.cues = [];
     this.frames = new Map(); // id -> t
     this.ranges = [];
@@ -79,6 +80,9 @@ class MarginApp {
   }
 
   async init({ byUser = false } = {}) {
+    // Closing the tab hands the lecture over (see handOff).
+    this.onPageHide = () => this.handOff();
+    window.addEventListener('pagehide', this.onPageHide);
     const settings = await this.bridge.storageGet({ marginAuto: true, marginCapture: {}, marginOpen: {} });
     this.auto = settings.marginAuto !== false;
     this.captureSettings = settings.marginCapture || {};
@@ -156,6 +160,7 @@ class MarginApp {
 
   tick() {
     if (this.outbox.length && !this.flushing && Date.now() - (this.lastFlush || 0) > 4000) this.flush();
+    this.reportState();
     const key = this.adapter.lectureKey();
     // Not a lecture page (YouTube's home feed with its hover previews, a Udemy
     // quiz): keep showing the last lecture, capture nothing.
@@ -554,6 +559,42 @@ class MarginApp {
     }
     this.stopCapture();
     this.unlisten?.();
+  }
+
+  /**
+   * Every couple of seconds, tell Margin's background worker what this tab is
+   * watching: closing a tab often gives the page no chance to speak, but the
+   * worker hears every tab close and finishes for it (see handOff).
+   */
+  reportState() {
+    if (Date.now() - (this.lastReport || 0) < 2000) return;
+    this.lastReport = Date.now();
+    const end = this.lastT;
+    const open = this.session && !this.handedOff;
+    this.bridge.send({
+      type: 'lecture-state', key: open ? this.session : null,
+      range: open && this.rangeStart !== null && end !== null && end > this.rangeStart ? [this.rangeStart, end] : null,
+      duration: this.duration() || null, write: Boolean(this.auto && this.capturing),
+    });
+  }
+
+  /**
+   * The tab is closing, or the panel: write or update the note if it needs
+   * it, as moving on to the next lecture does. The page may be gone a moment
+   * from now, so it is one message: Margin's background worker, which outlives
+   * the tab, records the last stretch watched and then asks the sidecar, which
+   * knows whether anything new came in and whether you edited the note.
+   */
+  handOff() {
+    if (!this.session || this.handedOff) return;
+    this.handedOff = true;
+    const end = this.lastT;
+    const range = this.rangeStart !== null && end !== null && end > this.rangeStart ? [this.rangeStart, end] : null;
+    this.rangeStart = null; // sent here, not again by leave()
+    this.bridge.send({
+      type: 'close-lecture', key: this.session, range, duration: this.duration() || null,
+      write: Boolean(this.auto && this.capturing),
+    });
   }
 
   // --- composing ------------------------------------------------------------------
@@ -968,7 +1009,9 @@ class MarginApp {
   }
 
   destroy({ byUser = false } = {}) {
+    this.handOff();
     this.leave('closing');
+    window.removeEventListener('pagehide', this.onPageHide);
     clearInterval(this.tickTimer);
     clearInterval(this.pollTimer);
     clearTimeout(this.healthRetry);
