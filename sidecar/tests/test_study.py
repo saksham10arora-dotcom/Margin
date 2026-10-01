@@ -110,11 +110,11 @@ def test_flashcards_are_kept_for_the_quiz_and_marked_stale_after_a_rewrite(clien
     assert made["tsv"].count("\n") >= 1
     assert api.get(f"/session/{key}/cards").json()["cards"] == made["cards"]
 
-    api.post(f"/session/{key}/compose")  # written again, word for word: the cards still fit
+    api.post(f"/session/{key}/compose", json={"full": True})  # written again, word for word: the cards still fit
     assert _wait_done(api, key)["state"] == "done"
     assert api.get(f"/session/{key}/cards").json()["stale"] is False
     monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
         CANNED.replace("blended smoothie", "fruit salad"), "fake-model"))
-    api.post(f"/session/{key}/compose")  # written again, differently
+    api.post(f"/session/{key}/compose", json={"full": True})  # written again, differently
     assert _wait_done(api, key)["state"] == "done"
     assert api.get(f"/session/{key}/cards").json()["stale"] is True

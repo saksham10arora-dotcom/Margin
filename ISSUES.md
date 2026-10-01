@@ -22,6 +22,14 @@ Written down so they are not rediscovered the hard way.
   notes for lessons you finished (progress 100) are covered by tests, not yet by
   a signed-in run.
 
+## Adding to a note (2.10.5)
+- "Add what's new" and the automatic updates write only the parts watched since
+  the note was written (and slides kept since), with the note so far as context,
+  and merge them in: new topics at their time, a topic's section replaced only
+  by a fuller one, new practice items appended, nothing else touched. A note
+  from before 2.10.5 gets one guarded full write first (kept if it comes out
+  thinner), then updates.
+
 ## Known gaps
 - **Reloading the extension** can lose up to ten seconds of watched time: the
   old copy's last report cannot reach the sidecar once Chrome has cut it off.

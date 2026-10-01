@@ -136,6 +136,26 @@ def merge_ranges(ranges: list[list[float]], gap: float = 2.0) -> list[list[float
     return merged
 
 
+def subtract_ranges(ranges: list[list[float]], minus: list[list[float]], least: float = 5.0) -> list[list[float]]:
+    """The parts of `ranges` outside `minus`, dropping slivers under `least` seconds."""
+    out = []
+    for start, end in merge_ranges(ranges):
+        pieces = [[start, end]]
+        for a, b in merge_ranges(minus):
+            nxt = []
+            for lo, hi in pieces:
+                if b <= lo or a >= hi:
+                    nxt.append([lo, hi])
+                    continue
+                if a > lo:
+                    nxt.append([lo, a])
+                if b < hi:
+                    nxt.append([b, hi])
+            pieces = nxt
+        out.extend(p for p in pieces if p[1] - p[0] >= least)
+    return out
+
+
 def covered_seconds(ranges: list[list[float]]) -> float:
     return sum(b - a for a, b in merge_ranges(ranges))
 
@@ -882,11 +902,32 @@ class Session:
     def material_rev(self) -> int:
         return self._read("material.json", {}).get("rev", 0)
 
-    def mark_composed(self, rev: int) -> None:
+    def mark_composed(self, rev: int, watched: list[list[float]] | None = None,
+                      frame_ids: list[str] | None = None) -> None:
+        """The note now covers everything up to `rev`. What it was written from
+        (the parts watched, the slides) is kept, so adding what's new later
+        means writing only the parts and slides since."""
         with _lock_for(self.key):
             material = self._read("material.json", {})
             material["composed_rev"] = rev
+            material["composed_watched"] = self.watched if watched is None else watched
+            material["composed_frames"] = [f["id"] for f in self.frames] if frame_ids is None else frame_ids
             self._write("material.json", material)
+
+    def new_since_note(self) -> tuple[list[list[float]], list[dict]]:
+        """What the note does not have yet: parts watched since it was written,
+        and slides kept since. ([], []) when nothing, or when Margin does not know
+        what the note was written from (a note from before 2.10.5)."""
+        material = self._read("material.json", {})
+        if "composed_watched" not in material:
+            return [], []
+        known = set(material.get("composed_frames") or [])
+        new_frames = [f for f in self.frames if f["id"] not in known]
+        return subtract_ranges(self.watched, material["composed_watched"]), new_frames
+
+    @property
+    def knows_what_note_covers(self) -> bool:
+        return "composed_watched" in self._read("material.json", {})
 
     @property
     def stale(self) -> bool:

@@ -25,7 +25,7 @@ from sidecar import notebook as NB
 from sidecar import study
 from sidecar.config import AUTOLINK, MAX_AUTOLINKS_PER_SECTION
 from sidecar.llm import Busy, EngineError, is_lite
-from sidecar.sessions import Session, all_sessions, course_sessions, load_session
+from sidecar.sessions import Session, all_sessions, course_sessions, format_ts, load_session
 from sidecar.vault_linker import link_note_to_vault
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def is_running(key: str) -> bool:
         return key in _running
 
 
-def start(session: Session, vault: Path, choice: dict | None = None) -> bool:
+def start(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> bool:
     """Kick off a compose in the background. False if one is already running
     for this lecture (a double click, or auto-compose racing a manual one); it
     is then run once more afterwards if new material arrives meanwhile."""
@@ -88,7 +88,7 @@ def start(session: Session, vault: Path, choice: dict | None = None) -> bool:
             return False
         _running.add(session.key)
     session.set_status("queued", "Queued")
-    threading.Thread(target=_run_guarded, args=(session, vault, choice), daemon=True).start()
+    threading.Thread(target=_run_guarded, args=(session, vault, choice, full), daemon=True).start()
     return True
 
 
@@ -149,10 +149,11 @@ def _a_model_is_ready() -> bool:
         return True
 
 
-def _run_guarded(session: Session, vault: Path, choice: dict | None = None) -> None:
+def _run_guarded(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> None:
     try:
         while True:
-            _run_with_retries(session, vault, choice)
+            _run_with_retries(session, vault, choice, full)
+            full = False  # what arrived meanwhile is added, not a second rewrite
             with _running_guard:
                 again = session.key in _again
                 _again.discard(session.key)
@@ -179,16 +180,16 @@ def _run_guarded(session: Session, vault: Path, choice: dict | None = None) -> N
             _again.discard(session.key)
 
 
-def _run_with_retries(session: Session, vault: Path, choice: dict | None = None) -> dict:
+def _run_with_retries(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> dict:
     for wait in RETRY_WAITS_SEC:
         try:
-            return run(session, vault, choice=choice)
+            return run(session, vault, choice=choice, full=full)
         except Busy as e:
             logger.warning("Every engine busy for %s, retrying in %ss: %s", session.key, wait, e)
             at = time.strftime("%H:%M", time.localtime(time.time() + wait))
             session.set_status("queued", f"Every model is busy right now. Trying again at {at}.")
             time.sleep(wait)
-    return run(session, vault, choice=choice)
+    return run(session, vault, choice=choice, full=full)
 
 
 def _relink_neighbours(vault: Path, meta: dict) -> None:
@@ -249,7 +250,7 @@ def upgrade_once(vault: Path, now: float | None = None) -> list[str]:
             _running.add(session.key)
         before = session.status
         try:
-            run(session, vault, quality="full")
+            run(session, vault, quality="full", full=True)  # a Lite note, written again in full
             upgraded.append(session.key)
         except Busy:
             tries = due[1] + 1
@@ -324,9 +325,26 @@ def resume_interrupted(vault: Path) -> list[str]:
     return enqueue(resume, vault) if resume else []
 
 
-def run(session: Session, vault: Path, quality: str = "any", choice: dict | None = None) -> dict:
+# A full rewrite Margin decides on (not your "Rewrite the notes") keeps your
+# note when it comes out thinner than this share of it: whichever model was
+# free wrote a third of the words once and replaced the better note.
+KEEP_UNLESS = 0.7
+
+
+def _note_words(text: str) -> int:
+    return len(re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.DOTALL).split())
+
+
+def run(session: Session, vault: Path, quality: str = "any", choice: dict | None = None,
+        full: bool = False) -> dict:
+    """Write the note. When it exists and Margin knows what it was written
+    from, add what is new (run_update); `full` (your "Rewrite the notes")
+    writes it all again."""
     meta = session.meta
     note_path = library.lecture_note_path(vault, meta)
+    if not full and note_path.exists() and session.knows_what_note_covers:
+        return run_update(session, vault, quality=quality, choice=choice)
+    guard = None if full or not note_path.exists() else note_path.read_text()
 
     previous = C.previous_note(vault, meta)
     previous_gist = C.read_frontmatter(previous).get("gist") if previous else None
@@ -334,6 +352,7 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
     # What this note is written from. Anything captured while it is being
     # written leaves the lecture marked as having something new.
     rev = session.material_rev
+    covers = (session.watched, [f["id"] for f in session.frames])  # what this note is written from
     slides = len(session.frames)
     session.set_status("composing", f"Writing notes from {len(session.cues)} transcript lines"
                        f" and {slides} slide{'s' if slides != 1 else ''}")
@@ -402,12 +421,24 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
         session.save_study("crux", {"crux": crux, "engine": comp.engine})
 
     note_path.parent.mkdir(parents=True, exist_ok=True)
+    if guard is not None and _note_words(note) < KEEP_UNLESS * _note_words(guard):
+        # Margin's own rewrite came out thinner than the note you have: keep
+        # yours, and from now on add what is new to it.
+        logger.warning("Rewrite of %s came out thinner (%s vs %s words): kept the note",
+                       session.key, _note_words(note), _note_words(guard))
+        session.mark_composed(rev, *covers)
+        session.set_status("done", "Notes ready (kept your note: the rewrite came out thinner)",
+                           result={"note_path": str(note_path), "filename": note_path.relative_to(vault).as_posix(),
+                                   "obsidian_uri": library.obsidian_uri(note_path), "engine": comp.engine,
+                                   "kept": True},
+                           resumed=False)
+        return session.status["result"]
     kept = _keep_your_edits(session, vault, note_path)
     if kept:
         note = _with_edits_notice(note, kept)
     note_path.write_text(note)
     session.record_written(_digest(note))
-    session.mark_composed(rev)
+    session.mark_composed(rev, *covers)
     _relink_neighbours(vault, meta)
     if is_lite(comp.engine) and not (choice and comp.engine_chosen):
         # A fallback, not your pick: a full model rewrites it later. A model you
@@ -431,6 +462,56 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
     }
     session.set_status("done", "Notes ready", result=result, resumed=False)
     return result
+
+
+def run_update(session: Session, vault: Path, quality: str = "any", choice: dict | None = None) -> dict:
+    """Add what is new to a lecture's note: sections for the parts watched
+    since it was written (and slides kept since), merged in at their place in
+    the lecture. The rest of the note is left exactly as it is; in a note you
+    edited nothing is replaced, only added."""
+    meta = session.meta
+    note_path = library.lecture_note_path(vault, meta)
+    rev = session.material_rev
+    covers = (session.watched, [f["id"] for f in session.frames])
+    ranges, frames = session.new_since_note()
+    old = note_path.read_text()
+    done = {**(session.status.get("result") or {}), "note_path": str(note_path),
+            "filename": note_path.relative_to(vault).as_posix(), "obsidian_uri": library.obsidian_uri(note_path)}
+    if not ranges and not frames:
+        session.mark_composed(rev, *covers)
+        session.set_status("done", "Notes ready: nothing new to add", result=done, resumed=False)
+        return done
+    edited = note_edited(session, vault)
+    what = ", ".join(f"{format_ts(a)} to {format_ts(b)}" for a, b in ranges) or f"{len(frames)} new slides"
+    session.set_status("composing", f"Adding {what} to the notes")
+    comp = C.compose_update(session, old, ranges, frames, quality=quality, choice=choice,
+                            progress=lambda message: session.set_status("composing", message))
+    additions, slide_files = C.place_slides(comp.note_body, session, vault, meta)
+    additions = C.link_timestamps(additions, meta)
+
+    if comp.cells:
+        session.set_status("running", "Running the new code in a fresh kernel")
+        lecture_id = str(meta.get("lecture_id") or session.key)
+        nb_path = library.notebook_path(vault, meta)
+        result = NB.run_section(comp.cells, lecture_id, meta.get("lecture_index"), meta.get("lecture_title") or "",
+                                cwd=library.course_dir(vault, meta))
+        NB.upsert_section(nb_path, library.course_dir(vault, meta).name,
+                          NB.section_cells(nb_path, lecture_id) + list(result.cells), lecture_id,
+                          meta.get("lecture_index"))
+
+    note = C.merge_update(old, additions, protect=edited) if additions.strip() else old
+    note = C.set_frontmatter(note, {"coverage": round(session.coverage(), 2),
+                                    "slides_captured": len(session.frames)})
+    note_path.write_text(note)
+    if not edited:
+        session.record_written(_digest(note))  # still Margin's own: later updates may improve its sections
+    session.mark_composed(rev, *covers)
+    if meta.get("course_title"):
+        write_course_index(vault, meta)
+    done = {**done, "engine": comp.engine, "slides_embedded": slide_files, "added": what}
+    session.set_status("done", f"Added {what} to the notes" if additions.strip() else "Notes ready: nothing new worth adding",
+                       result=done, resumed=False)
+    return done
 
 
 # --- course index --------------------------------------------------------------

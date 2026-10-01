@@ -234,8 +234,8 @@ def test_lecture_resources_survive_the_trip_into_the_session(client):
 
 # --- your edits, Lite notes, stale code ---------------------------------------------
 
-def _compose_done(api, key):
-    api.post(f"/session/{key}/compose")
+def _compose_done(api, key, full=False):
+    api.post(f"/session/{key}/compose", json={"full": True} if full else None)
     assert _wait_done(api, key)["state"] == "done"
 
 
@@ -252,8 +252,8 @@ def test_a_note_you_edited_is_kept_when_rewritten(client):
     # Margin's own decision (a lecture ended) leaves it alone...
     auto = api.post(f"/session/{key}/compose", json={"auto": True}).json()
     assert auto["started"] is False and auto["skipped"] == "edited"
-    # ...your button rewrites it, and your version is kept beside it.
-    _compose_done(api, key)
+    # ...your "Rewrite the notes" rewrites it, and your version is kept beside it.
+    _compose_done(api, key, full=True)
     kept = list((vault / "Quant Finance" / ".margin-history").glob("*your edits*.md"))
     assert len(kept) == 1 and "My own line." in kept[0].read_text()
     rewritten = note.read_text()
@@ -331,7 +331,7 @@ def test_a_rewrite_without_code_removes_the_old_notebook_section(client, monkeyp
     assert "nocode" in ids()
     no_code = CANNED.split("<<<CODE>>>")[0] + "<<<CODE>>>\nNONE\n<<<END>>>\n"
     monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (no_code, "fake-model"))
-    _compose_done(api, key)
+    _compose_done(api, key, full=True)
     assert "nocode" not in ids()
     assert "## In code" not in (vault / "Quant Finance" / "28 - Expected return of the portfolio.md").read_text()
 
@@ -470,3 +470,53 @@ def test_closing_the_tab_writes_the_note_only_when_it_needs_it(client):
     api.post(f"/session/{key}/frame", json={"t": 200, "data": base64.b64encode(buf.getvalue()).decode()})
     assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is True  # a new slide
     assert _wait_done(api, key)["state"] == "done"
+
+
+def test_adding_whats_new_keeps_the_note_and_writes_only_the_new_part(client, monkeypatch):
+    # "Add what's new" wrote the whole note again, from whichever model was
+    # free: a 3,400-word note came back as 1,400 words. Now only the parts
+    # watched since go to the model, with the note so far, and are added in.
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "grow"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [
+        {"start": 0, "end": 5, "text": "Today, expected return."},
+        {"start": 100, "end": 110, "text": "Variance measures risk."}]})
+    api.post(f"/session/{key}/watched", json={"start": 0, "end": 60})
+    _compose_done(api, key)
+    note_path = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
+    first = note_path.read_text()
+
+    api.post(f"/session/{key}/watched", json={"start": 60, "end": 300})  # watched on
+    asked = []
+
+    def update(prompt, pictures=None, **kw):
+        asked.append(prompt)
+        return ("<<<NOTE>>>\n## Risk [01:40]\nVariance measures how far returns swing around the mean.\n\n"
+                "## Check yourself\n> [!question]- What measures risk?\n> Variance.\n<<<CODE>>>\nNONE\n<<<END>>>",
+                "fake-model")
+    monkeypatch.setattr(C, "generate", update)
+    _compose_done(api, key)
+
+    prompt = asked[0]
+    assert "THE NOTE SO FAR" in prompt and "blended smoothie" in prompt           # it saw the note
+    assert "Variance measures risk." in prompt and "Today, expected return." not in prompt  # only the new part
+    note = note_path.read_text()
+    assert note.index("## Weights and means") < note.index("## Risk [01:40]")      # added in lecture order
+    assert first.split("## Weights and means")[1].split("## In code")[0].strip() in note  # old section intact
+    assert "Why weights?" in note and "What measures risk?" in note
+    assert api.get(f"/session/{key}").json()["status"]["message"].startswith("Added 01:00 to 05:00")
+
+    asked.clear()
+    _compose_done(api, key)  # nothing watched since: nothing written
+    assert asked == [] and note_path.read_text() == note
+
+
+def test_rewrite_the_notes_still_writes_it_all_again(client, monkeypatch):
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "again"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Expected return."}]})
+    _compose_done(api, key)
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
+        CANNED.replace("blended smoothie", "fruit salad"), "fake-model"))
+    _compose_done(api, key, full=True)
+    assert "fruit salad" in (vault / "Quant Finance" / "28 - Expected return of the portfolio.md").read_text()

@@ -273,6 +273,15 @@ def extract_figures(cells: list, assets: Path, prefix: str, limit: int = 4) -> l
     return names
 
 
+def section_cells(path: Path, lecture_id: str) -> list:
+    """A lecture's cells in the course notebook, in order (none if it has none)."""
+    if not path.exists():
+        return []
+    nb = nbformat.read(path, as_version=4)
+    return [c for c in nb.cells if str(c.metadata.get("margin", {}).get("lecture_id")) == str(lecture_id)
+            and not c.metadata.get("margin", {}).get("header")]
+
+
 def remove_section(path: Path, lecture_id: str) -> None:
     """Take a lecture's section out of the course notebook, if it has one."""
     if not path.exists():

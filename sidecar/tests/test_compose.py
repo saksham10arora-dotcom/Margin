@@ -218,3 +218,88 @@ def test_a_thinned_transcript_is_explained_to_the_model():
     assert "Give the watched parts the depth" in thinned
     whole = C.build_prompt(META, "[00:10] Expected return.", "youtube-captions", [], None, None)
     assert "left out" not in whole
+
+
+# --- adding what's new to a note -----------------------------------------------------
+
+NOTE_SO_FAR = """---
+title: Algorithms
+generated_by: margin
+---
+
+# 3 · Algorithms
+
+> [!abstract] In one breath
+> Algorithms and how to measure them.
+
+## The idea
+Recipes for computers.
+
+## Introduction [00:00]
+What an algorithm is, five properties, with examples and a picture of the slide.
+
+## Sorting [20:00]
+Sorting puts things in order.
+
+## Worked example
+Largest of three numbers.
+
+## Watch out
+- Big-O is an upper bound.
+
+## Check yourself
+> [!question]- What is finiteness?
+> It stops.
+
+## Key terms
+- **Algorithm**: a finite sequence of steps.
+"""
+
+ADDITIONS = """## Master Theorem [10:00]
+Solves T(n) = aT(n/b) + f(n) by comparing f(n) with n^(log_b a), in three cases.
+
+## Sorting [20:00]
+Sorting puts things in order. Insertion sort grows a sorted prefix; merge sort splits, sorts the
+halves and merges them in linear time, so it runs in n log n.
+
+## Worked example
+T(n) = 4T(n/2) + n is case 1, so Theta(n^2).
+
+## Check yourself
+> [!question]- Which case is 2T(n/2) + n?
+> Case 2: Theta(n log n).
+"""
+
+
+def test_whats_new_is_added_in_lecture_order_and_nothing_else_moves():
+    merged = C.merge_update(NOTE_SO_FAR, ADDITIONS)
+    heads = [h for h in merged.splitlines() if h.startswith("## ")]
+    assert heads == ["## The idea", "## Introduction [00:00]", "## Master Theorem [10:00]", "## Sorting [20:00]",
+                     "## Worked example", "## Watch out", "## Check yourself", "## Key terms"]
+    assert merged.startswith(NOTE_SO_FAR.split("## The idea")[0])            # frontmatter, title, abstract
+    assert "five properties, with examples" in merged                         # untouched section
+    assert "merge sort splits" in merged and "Sorting puts things in order.\n\n## Worked" not in merged
+    assert "Largest of three numbers." in merged and "is case 1" in merged     # examples: old and new
+    assert "What is finiteness?" in merged and "Which case is 2T" in merged    # questions: old and new
+    assert "- **Algorithm**: a finite sequence of steps." in merged            # key terms kept
+
+
+def test_a_section_is_never_replaced_by_a_thinner_one():
+    thinner = "## Introduction [00:00]\nAlgorithms.\n"
+    merged = C.merge_update(NOTE_SO_FAR, thinner)
+    assert "five properties, with examples" in merged and "\nAlgorithms.\n" not in merged
+
+
+def test_a_note_you_edited_only_gains_new_sections():
+    merged = C.merge_update(NOTE_SO_FAR, ADDITIONS, protect=True)
+    assert "## Master Theorem [10:00]" in merged                               # new topic added
+    assert "merge sort splits" not in merged                                   # your Sorting section kept as is
+    assert "Which case is 2T" in merged                                        # new question added
+
+
+def test_a_new_topic_close_in_time_to_an_old_one_is_still_added():
+    # "Risk" at 1:40 was taken for "Weights and means" at 0:10 (within 90 s)
+    # and dropped as a thinner copy of it: a new topic must never be lost.
+    note = "# L\n\n## Weights and means [00:10]\nA long section about weights and means of assets.\n"
+    merged = C.merge_update(note, "## Risk [01:40]\nVariance.\n")
+    assert "## Weights and means [00:10]" in merged and "## Risk [01:40]" in merged

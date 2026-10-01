@@ -37,9 +37,11 @@ the note (with the lecture's own diagram next to one it drew), its crux, flashca
   keys, a local model server or big downloads is kept exactly as taught and
   marked for you to run.
 - **One note, however you watch.** Start in the middle, reload, skip, rewatch:
-  it all builds one record, and a later watch that catches something new rewrites
-  the same note: when the lecture ends, when you move to the next one, or when you
-  close the tab. Edits you make in Obsidian are never overwritten on Margin's own.
+  it all builds one record. What you watch later is added to the same note (new
+  sections at their place in the lecture, nothing else touched) when the lecture
+  ends, when you move to the next one, or when you close the tab. **Rewrite the
+  notes** writes it all again, only when you ask. Edits you make in Obsidian are
+  never overwritten.
 - **Lectures you finished before Margin** (on Udemy or DeepLearning.AI) get notes
   from their captions, one click in the Course tab.
 - **The crux, the 80/20.** Its own tab: the one idea the lecture exists to teach,

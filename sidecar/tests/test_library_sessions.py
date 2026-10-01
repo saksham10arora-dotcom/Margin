@@ -576,3 +576,18 @@ def test_watching_more_of_a_short_lecture_changes_nothing(tmp_path):
     s.mark_composed(s.material_rev)
     s.mark_watched(120, 500)  # the note was written from all of it already
     assert not s.stale
+
+
+# --- what is new since the note was written ----------------------------------------
+
+def test_the_lecture_knows_what_is_new_since_its_note(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.mark_watched(0, 600)
+    first = s.add_frame(100, _slide("Expected return", A))
+    s.mark_composed(s.material_rev)
+    assert s.new_since_note() == ([], [])
+    s.mark_watched(500, 900)  # rewatched a bit, then watched on
+    new = s.add_frame(700, _slide("Portfolio risk", B))
+    ranges, frames = s.new_since_note()
+    assert ranges == [[600, 900]]
+    assert [f["id"] for f in frames] == [new["id"]] and new["id"] != first["id"]

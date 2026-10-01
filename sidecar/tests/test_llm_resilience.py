@@ -149,7 +149,7 @@ def test_a_busy_spell_is_waited_out_and_the_note_still_written(tmp_path, monkeyp
     session = sessions.open_session(UDEMY, root=tmp_path)
     attempts = []
 
-    def run(s, vault, choice=None):
+    def run(s, vault, choice=None, full=False):
         attempts.append(s.status.get("message", ""))
         if len(attempts) < 3:
             raise llm.Busy("overloaded")
@@ -167,7 +167,7 @@ def test_a_note_asked_for_while_one_is_being_written_is_written_again(tmp_path, 
     session = sessions.open_session(UDEMY, root=tmp_path)
     runs = []
 
-    def run(s, vault, choice=None):
+    def run(s, vault, choice=None, full=False):
         runs.append(1)
         rev = s.material_rev  # what this note is written from, as in the real run()
         if len(runs) == 1:

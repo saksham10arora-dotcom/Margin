@@ -463,6 +463,197 @@ def compose(session: Session, previous_gist: str | None = None, progress=None,
                        engine_chosen=bool(choice) and str(choice.get("model")) in engine)
 
 
+# --- adding what's new to a note ---------------------------------------------
+#
+# A note grows as you watch: a later watch adds sections for the parts watched
+# since, rather than writing the whole note again (which, from whichever model
+# was free, replaced a 3,400-word note with a 1,400-word one).
+
+# The practice sections at the end of every note: an update adds items to them.
+END_SECTIONS = ("Worked example", "Setup and resources", "In code", "Watch out", "Check yourself", "Key terms")
+_SECTION = re.compile(r"^## (.+)$", re.MULTILINE)
+_HEADING_TIME = re.compile(r"\[(\d+):(\d\d)(?::(\d\d))?\]")
+
+
+def _sections(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """(everything before the first `##` heading, [(heading, body), ...])."""
+    marks = list(_SECTION.finditer(text))
+    if not marks:
+        return text, []
+    out = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        out.append((m.group(1).strip(), text[m.end():end].strip("\n")))
+    return text[:marks[0].start()], out
+
+
+def _end_name(heading: str) -> str | None:
+    low = heading.lower()
+    return next((n for n in END_SECTIONS if low.startswith(n.lower())), None)
+
+
+def _heading_seconds(heading: str) -> int | None:
+    m = _HEADING_TIME.search(heading)
+    if not m:
+        return None
+    a, b, c = m.groups()
+    return int(a) * 3600 + int(b) * 60 + int(c) if c else int(a) * 60 + int(b)
+
+
+def _words(body: str) -> int:
+    return len(re.sub(r"!\[\[[^\]]*\]\]|\{\{slide:[^}]+\}\}", " ", body).split())
+
+
+def _title(heading: str) -> str:
+    """A heading without its timestamp (or timestamp link), for comparing topics."""
+    return re.sub(r"\s+", " ", re.sub(r"\[\d+:\d\d(?::\d\d)?\](?:\([^)]*\))?", "", heading)).strip().lower()
+
+
+def merge_update(note: str, additions: str, protect: bool = False, same_topic_sec: int = 10) -> str:
+    """Add an update's sections to a note. A new topic goes in at its time in
+    the lecture; a topic the note has (the same title, or a start within
+    `same_topic_sec`: the update is told to repeat both when it adds to a
+    section) is replaced only by a fuller one, and never in a note you edited
+    (`protect`); items for the practice sections at the end are added after
+    the ones there. Nothing else in the note changes, and no topic is dropped."""
+    head, old = _sections(note)
+    _, new = _sections("\n" + additions.strip() + "\n")
+    lead = [s for s in old if _end_name(s[0]) is None and _heading_seconds(s[0]) is None]
+    topics = [s for s in old if _end_name(s[0]) is None and _heading_seconds(s[0]) is not None]
+    ends = [s for s in old if _end_name(s[0]) is not None]
+    for heading, body in new:
+        name = _end_name(heading)
+        if name is not None:
+            if name == "In code":
+                continue  # written from the notebook, not by an update
+            at = next((i for i, s in enumerate(ends) if _end_name(s[0]) == name), None)
+            if at is None:
+                ends.append((heading, body))
+            elif body.strip() and body.strip() not in ends[at][1]:
+                ends[at] = (ends[at][0], ends[at][1].rstrip() + "\n\n" + body.strip())
+            continue
+        t = _heading_seconds(heading)
+        if t is None:
+            continue  # an untimed section ("The idea" again): the note has its own
+        twin = next((i for i, s in enumerate(topics)
+                     if _title(s[0]) == _title(heading) or abs(_heading_seconds(s[0]) - t) <= same_topic_sec), None)
+        if twin is None:
+            topics.append((heading, body))
+        elif not protect and _words(body) >= _words(topics[twin][1]):
+            topics[twin] = (heading, body)
+    topics.sort(key=lambda s: _heading_seconds(s[0]))
+    order = {n: i for i, n in enumerate(END_SECTIONS)}
+    ends.sort(key=lambda s: order.get(_end_name(s[0]), len(order)))
+    parts = [f"## {h}\n{b}" for h, b in lead + topics + ends]
+    return head.rstrip("\n") + "\n\n" + "\n\n".join(parts).rstrip() + "\n"
+
+
+def _without_frontmatter(note: str) -> str:
+    return re.sub(r"\A---\n.*?\n---\n", "", note, count=1, flags=re.DOTALL).strip()
+
+
+def build_update_prompt(meta: dict, note: str, transcript: str, transcript_source: str | None,
+                        ranges: list[list[float]], slides: list[dict]) -> str:
+    lecture = meta.get("lecture_title") or "Untitled lecture"
+    where = [f"Course: {meta['course_title']}"] if meta.get("course_title") else []
+    where.append(f"Lecture: {lecture}")
+    parts = ", ".join(f"{format_ts(a)} to {format_ts(b)}" for a, b in ranges) or "parts already watched"
+    if transcript_source == "asr":
+        source_note = ("The transcript was produced by local speech recognition and WILL contain mis-heard "
+                       "words. Silently correct them using the slides and the subject matter.")
+    else:
+        source_note = ("The transcript comes from the platform's captions; correct mis-heard technical "
+                       "terms silently.")
+    if slides:
+        slide_block = (f"You also have {len(slides)} new slide captures, attached after this text in order, "
+                       f"each labelled with its id:\n" + "\n".join(f"- {s['id']} at {format_ts(s['t'])}" for s in slides))
+    else:
+        slide_block = "There are no new slides for these parts."
+    return f"""You are Margin, and you keep a student's study notes for a lecture. The reader is a
+university student who learns best from intuition first, pictures second, formulas third.
+
+{chr(10).join(where)}
+
+You already wrote the notes for this lecture. Here they are, as they stand now:
+<<<THE NOTE SO FAR
+{_without_frontmatter(note)}
+THE NOTE SO FAR>>>
+
+Since then the student watched more of the lecture: {parts}. Below is what was said in exactly
+those parts. {source_note}
+
+{slide_block}
+
+Write notes for these parts ONLY, to be added to the note above. Do not write the note again.
+- One `##` section per topic these parts cover, in the order they cover them, each heading ending
+  with the timestamp where the topic starts, written exactly like `[04:12]`.
+- Write them like the note above: explain in your own words in short paragraphs and tight bullets,
+  bold key terms, every formula in KaTeX (`$...$`, `$$...$$` on its own lines) with a `where` line
+  under each display formula saying what every symbol means, a Mermaid diagram (```mermaid,
+  `flowchart TD`, every node label in double quotes) where there is a process or relationship, a
+  table when comparing things, and a slide embedded on its own line as `{{{{slide:S003}}}}` where it
+  carries what words cannot.
+- If a topic already has a section in the note above and these parts teach it more fully, write
+  that section again with the SAME heading and timestamp, keeping everything it already says and
+  adding what these parts add. Otherwise never repeat what the note already says.
+- No abstract, no "The idea", no crux: the note has them.
+- Then, only where these parts give new material, the practice sections with ONLY the new items:
+  `## Worked example` (use the lecture's own numbers; if the numbers are yours, title it
+  `## Worked example (by Margin)`), `## Watch out`, `## Check yourself` (each question a collapsed
+  callout, `> [!question]- The question?` then `> The answer.`), `## Key terms` (`- **Term**: definition`).
+- Faithful first: everything comes from these parts of the lecture (what was said and what was on
+  screen). You add understanding, never content.
+- If these parts add nothing worth a note (a recap of what the note has, an aside), write just NONE.
+- Never mention "the transcript" or "the speaker said". Never use em dashes.
+
+Produce exactly these blocks, with the markers on their own lines.
+
+<<<NOTE>>>
+The new sections, or NONE.
+<<<CODE>>>
+Only if these parts show or dictate code: the notebook cells for that code in jupytext percent
+format (`# %%` starts a code cell, `# %% [markdown]` a markdown cell with every line prefixed `# `).
+They run on their own in a fresh kernel, so include their own imports. Code that calls a paid API,
+a local model server, downloads models or datasets, or starts a UI starts with the line
+`# margin: run it yourself`. Otherwise write NONE.
+<<<END>>>
+
+What was said in these parts (timestamps in [mm:ss]):
+{transcript or '(nothing was said in them)'}
+"""
+
+
+def is_update(raw: str) -> bool:
+    return "NOTE" in split_blocks(raw) or raw.strip().upper() == "NONE"
+
+
+def compose_update(session: Session, note: str, ranges: list[list[float]], frames: list[dict],
+                   progress=None, quality: str = "any", choice: dict | None = None) -> Composition:
+    """Notes for the parts watched since the note was written (and the slides
+    kept since), to be merged into it: see merge_update."""
+    meta = session.meta
+    spans = [[a - 5, b + 5] for a, b in ranges]
+    # New slides from a part watched before (a rewatch): what was said around them.
+    spans += [[f["t"] - 60, f["t_last"] + 30] for f in frames if not any(a <= f["t"] <= b for a, b in ranges)]
+    cues = [c for c in session.cues if any(a <= c["start"] <= b for a, b in spans)]
+    transcript = session.transcript_text(cues=cues)[:MAX_TRANSCRIPT_CHARS]
+    slides = select_slides(frames)
+    pictures = [Picture(label=f"{f['id']} at {format_ts(f['t'])}", data=data)
+                for f in slides if (data := session.frame_bytes(f["id"]))]
+    prompt = build_update_prompt(meta, note, transcript, session.transcript_source, ranges, slides)
+    raw, engine = generate(prompt, pictures, progress=progress, quality=quality, accept=is_update, choice=choice)
+    blocks = split_blocks(raw)
+    additions = _strip_fence(blocks.get("NOTE", "")) if "NOTE" in blocks else raw.strip()
+    if additions.strip().upper() == "NONE":
+        additions = ""
+    additions = tidy_typography(remove_em_dashes(re.sub(r"\A\s*# [^\n]*\n", "", additions)))
+    code = blocks.get("CODE", "")
+    cells = [] if code.strip().upper() == "NONE" else parse_percent_cells(code)
+    used = sorted(set(re.findall(r"\{\{slide:(S\d{3,4})\}\}", additions)))
+    return Composition(note_body=additions, gist="", cells=cells, engine=engine, slides_used=used,
+                       engine_chosen=bool(choice) and str(choice.get("model")) in engine)
+
+
 # --- writing the note --------------------------------------------------------
 
 def timestamp_url(meta: dict, seconds: int) -> str | None:
@@ -596,6 +787,22 @@ def previous_note(vault: Path, meta: dict) -> Path | None:
 
 def next_note(vault: Path, meta: dict) -> Path | None:
     return _neighbour(vault, meta, +1)
+
+
+def set_frontmatter(note: str, fields: dict) -> str:
+    """Change (or add) simple `key: value` lines in a note's frontmatter."""
+    m = re.match(r"\A---\n(.*?)\n---\n", note, re.DOTALL)
+    if not m:
+        return note
+    lines = m.group(1).split("\n")
+    for key, value in fields.items():
+        line = f"{key}: {value}"
+        at = next((i for i, l in enumerate(lines) if l.startswith(f"{key}:")), None)
+        if at is None:
+            lines.append(line)
+        else:
+            lines[at] = line
+    return "---\n" + "\n".join(lines) + "\n---\n" + note[m.end():]
 
 
 def read_frontmatter(path: Path) -> dict:

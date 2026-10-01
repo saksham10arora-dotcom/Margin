@@ -604,7 +604,7 @@ class MarginApp {
    * being left behind (autoplay moved on): its notes are written without
    * touching the panel, which already shows the next lecture.
    */
-  async compose({ background = false, auto = false } = {}) {
+  async compose({ background = false, auto = false, full = false } = {}) {
     if (!this.session) return;
     const session = this.session;
     const recorder = this.recorder;
@@ -624,7 +624,7 @@ class MarginApp {
     }
     // Anything still held from a sidecar restart belongs in these notes.
     if (this.outbox.some((x) => x.session === session)) await this.flush();
-    const res = await this.api('POST', `/session/${session}/compose`, this.composeBody({ auto }));
+    const res = await this.api('POST', `/session/${session}/compose`, this.composeBody({ auto, full }));
     if (background) return;
     if (res.ok && res.data?.skipped === 'edited') {
       this.edited = true;
@@ -896,8 +896,12 @@ class MarginApp {
       }
       this.startCapture();
       if (this.video?.paused) this.video.play?.().catch(() => {});
-    } else if (action === 'compose' || action === 'recompose') {
+    } else if (action === 'compose') {
       this.compose();
+    } else if (action === 'recompose') {
+      // "Add what's new" (something new since the note) adds to it; "Rewrite
+      // the notes" (nothing new) is you asking for the whole note again.
+      this.compose({ full: !this.stale });
     }
   }
 
@@ -917,7 +921,7 @@ class MarginApp {
     } else if (act === 'cards') {
       this.panel.show('quiz'); // see them, quiz yourself, and export them from there
     } else if (act === 'recompose') {
-      this.compose();
+      this.compose({ full: true }); // the menu's "Rewrite the notes": the whole note again
     } else if (act === 'model') {
       this.openModels();
     } else if (act === 'settings') {
@@ -928,8 +932,9 @@ class MarginApp {
   // --- the model menu ---------------------------------------------------------------
 
   /** What goes with a compose request: whether Margin decided on its own. */
-  composeBody({ auto = false } = {}) {
-    return auto ? { auto: true } : undefined;
+  composeBody({ auto = false, full = false } = {}) {
+    const body = { ...(auto ? { auto: true } : {}), ...(full ? { full: true } : {}) };
+    return Object.keys(body).length ? body : undefined;
   }
 
   showOrderLabel(order) {
