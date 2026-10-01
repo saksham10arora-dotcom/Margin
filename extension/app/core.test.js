@@ -86,6 +86,9 @@ describe('ranges', () => {
     expect(shouldAutoCompose({ reason: 'leaving', coverage: 0.1, composed: true, stale: true, hasContent: true })).toBe(true);
     expect(shouldAutoCompose({ reason: 'ended', coverage: 0.1, composed: true, stale: true, hasContent: true })).toBe(true);
     expect(shouldAutoCompose({ reason: 'ended', coverage: 1, composed: true, stale: false, hasContent: true })).toBe(false);
+    // A long lecture: 2% watched is still 20 minutes, a note's worth.
+    expect(shouldAutoCompose({ reason: 'leaving', coverage: 0.02, composed: false, hasContent: true, watchedSec: 1200 })).toBe(true);
+    expect(shouldAutoCompose({ reason: 'leaving', coverage: 0.02, composed: false, hasContent: true, watchedSec: 600 })).toBe(false);
     // ...but not over edits you made to the note yourself.
     expect(shouldAutoCompose({ reason: 'ended', coverage: 1, composed: true, stale: true, edited: true, hasContent: true })).toBe(false);
     expect(shouldAutoCompose({ reason: 'ended', coverage: 1, composed: false, hasContent: false })).toBe(false);

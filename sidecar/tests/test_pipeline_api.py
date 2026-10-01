@@ -478,15 +478,15 @@ def test_adding_whats_new_keeps_the_note_and_writes_only_the_new_part(client, mo
     # watched since go to the model, with the note so far, and are added in.
     api, vault = client
     key = api.post("/session", json={**META, "lecture_id": "grow"}).json()["key"]
-    api.post(f"/session/{key}/captions", json={"cues": [
-        {"start": 0, "end": 5, "text": "Today, expected return."},
-        {"start": 100, "end": 110, "text": "Variance measures risk."}]})
+    # A lecture without captions: what Margin heard is all the note can have.
+    sessions.load_session(key).add_asr_cues([{"start": 0, "end": 5, "text": "Today, expected return."}])
     api.post(f"/session/{key}/watched", json={"start": 0, "end": 60})
     _compose_done(api, key)
     note_path = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
     first = note_path.read_text()
 
-    api.post(f"/session/{key}/watched", json={"start": 60, "end": 300})  # watched on
+    api.post(f"/session/{key}/watched", json={"start": 60, "end": 300})  # watched on, and heard more
+    sessions.load_session(key).add_asr_cues([{"start": 100, "end": 110, "text": "Variance measures risk."}])
     asked = []
 
     def update(prompt, pictures=None, **kw):
@@ -520,3 +520,59 @@ def test_rewrite_the_notes_still_writes_it_all_again(client, monkeypatch):
         CANNED.replace("blended smoothie", "fruit salad"), "fake-model"))
     _compose_done(api, key, full=True)
     assert "fruit salad" in (vault / "Quant Finance" / "28 - Expected return of the portfolio.md").read_text()
+
+
+def test_leaving_a_long_lecture_writes_its_first_note_after_twenty_minutes(client):
+    # A nine-hour one-shot is never 75% watched in one go: its first note
+    # waited for a button. Twenty minutes is a note's worth.
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "long", "duration_sec": 9 * 3600}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Algorithms."}]})
+    closing = {"auto": True, "if_needed": True}
+    api.post(f"/session/{key}/watched", json={"start": 0, "end": 600})
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is False
+    api.post(f"/session/{key}/watched", json={"start": 600, "end": 1300})
+    assert api.post(f"/session/{key}/compose", json=closing).json()["started"] is True
+    assert _wait_done(api, key)["state"] == "done"
+
+
+def test_a_note_you_deleted_is_not_written_again_on_its_own(client):
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "gone"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Expected return."}]})
+    _compose_done(api, key)
+    (vault / "Quant Finance" / "28 - Expected return of the portfolio.md").unlink()  # you deleted it
+    auto = api.post(f"/session/{key}/compose", json={"auto": True}).json()
+    assert auto["started"] is False and auto["skipped"] == "deleted"
+    _compose_done(api, key)  # your button still writes it
+    assert (vault / "Quant Finance" / "28 - Expected return of the portfolio.md").exists()
+
+
+def test_rewrite_the_notes_keeps_the_version_it_replaces(client, monkeypatch):
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "keep"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Expected return."}]})
+    _compose_done(api, key)
+    note = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
+    before = note.read_text()
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
+        CANNED.replace("blended smoothie", "fruit salad"), "fake-model"))
+    _compose_done(api, key, full=True)
+    kept = list((vault / "Quant Finance" / ".margin-history").glob("28 - * (before rewrite *).md"))
+    assert len(kept) == 1 and kept[0].read_text() == before and "fruit salad" in note.read_text()
+
+
+def test_margins_own_full_rewrite_keeps_a_fuller_note(client, monkeypatch):
+    # The later upgrade of a quick note is Margin's decision, not yours: if it
+    # comes out much thinner than the note there, the note stays.
+    from sidecar import pipeline
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "thin"}).json()["key"]
+    api.post(f"/session/{key}/captions", json={"cues": [{"start": 0, "end": 5, "text": "Expected return."}]})
+    _compose_done(api, key)
+    note = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
+    before = note.read_text()
+    thin = "<<<NOTE>>>\n## The idea\nShort.\n<<<GIST>>>\nShort.\n<<<CODE>>>\nNONE\n<<<END>>>\n"
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (thin, "fake-model"))
+    pipeline.run(sessions.load_session(key), vault, full=True)
+    assert note.read_text() == before

@@ -31,9 +31,15 @@ SUBSCRIPTIONS: list[dict] = [
      "key": "CLAUDE_CODE_OAUTH_TOKEN"},
     {"id": "codex", "name": "ChatGPT Plus / Pro", "tool": "Codex CLI", "bin": "codex", "images": True,
      "models": ["default"], "install": "npm install -g @openai/codex", "login": "Run `codex login` and sign in with ChatGPT"},
-    {"id": "gemini-cli", "name": "Google account (Gemini)", "tool": "Gemini CLI", "bin": "gemini", "images": True,
-     "models": ["default"], "install": "npm install -g @google/gemini-cli",
-     "login": "Run `gemini` once and choose Login with Google"},
+    # Google AI Pro and Ultra: Gemini CLI stopped working for them on 18 June
+    # 2026 and Antigravity's agy took its place (Gemini 3.x Flash and Pro,
+    # Claude Sonnet and Opus on the same plan). Checked on a real Mac.
+    {"id": "antigravity", "name": "Google AI Pro / Ultra", "tool": "Antigravity CLI", "bin": "agy", "images": True,
+     "models": [], "install": "Install Antigravity from antigravity.google (it adds `agy`)",
+     "login": "Open Antigravity once and sign in with your Google account"},
+    {"id": "gemini-cli", "name": "Google Cloud / Code Assist (Gemini CLI)", "tool": "Gemini CLI", "bin": "gemini",
+     "images": True, "models": ["default"], "install": "npm install -g @google/gemini-cli",
+     "login": "Run `gemini` once and sign in (AI Pro and Ultra use Antigravity instead)"},
     {"id": "opencode", "name": "OpenCode (any provider signed in there)", "tool": "OpenCode", "bin": "opencode",
      "images": True, "models": [], "install": "brew install sst/tap/opencode", "login": "Run `opencode auth login`"},
     {"id": "cursor", "name": "Cursor", "tool": "Cursor Agent", "bin": "cursor-agent", "images": False,
@@ -85,6 +91,12 @@ def status() -> list[dict]:
 
 def models(sub_id: str) -> list[str]:
     sub = get(sub_id)
+    if sub_id == "antigravity":
+        exe = find("agy")
+        if not exe:
+            return []
+        out = subprocess.run([exe, "models"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        return [ln.split("\t")[0].strip() for ln in out.stdout.splitlines() if "\t" in ln]
     if sub_id != "opencode":
         return list(sub["models"])
     exe = find("opencode")
@@ -187,6 +199,13 @@ def _invoke(sub_id: str, exe: str, prompt: str, files: list, model: str | None, 
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout
         _fail("Cursor Agent", r.stderr + r.stdout)
+    if sub_id == "antigravity":
+        full = prompt + (f"\n\nThe slide images are files in this folder, in this order:\n{listing}" if files else "")
+        r = call([exe, "-p", full, "--output-format", "text", "--print-timeout", f"{TIMEOUT_SEC // 60}m",
+                  "--sandbox", "--add-dir", str(tmp), *(["--model", model] if model else [])])
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout
+        _fail("Antigravity CLI", r.stderr + r.stdout)
     if sub_id == "copilot":
         r = call([exe, "-p", prompt, *(["--model", model] if model else [])])
         if r.returncode == 0 and r.stdout.strip():

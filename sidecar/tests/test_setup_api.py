@@ -180,3 +180,19 @@ def test_the_menu_lists_subscriptions_and_says_what_each_needs(api, monkeypatch)
     assert subs["cursor"]["hint"].startswith("Install:")
     assert "grok" in body["not_yet"]
     assert body["order"][0]["title"] == "Google Gemini"
+
+
+def test_a_google_ai_pro_plan_writes_through_antigravity(tmp_path, monkeypatch, usage):
+    # Gemini CLI stopped working for Google AI Pro and Ultra on 18 June 2026;
+    # Antigravity's agy took its place, headless with -p, reading the slides
+    # from its folder, in its sandbox.
+    exe = _tool(tmp_path, "agy", 'args="$*"\n'
+                'if [ "$1" = "models" ]; then printf "Fetching available models...\\ngemini-3.1-pro-high\\tGemini 3.1 Pro (High)\\n'
+                'claude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\n"; exit 0; fi\n'
+                'echo "note: $(echo "$args" | grep -o "_[0-9][0-9]\\.jpg" | wc -l | tr -d " ") slides, '
+                'sandbox $(echo "$args" | grep -c -- "--sandbox"), model $(echo "$args" | grep -o "gemini-3.1-pro-high")"\n')
+    monkeypatch.setattr(subscriptions, "find", lambda b: exe)
+    assert subscriptions.models("antigravity") == ["gemini-3.1-pro-high", "claude-sonnet-4-6"]
+    text = subscriptions.run("antigravity", "write the note", [Picture("S001 at 00:10", b"jpg"), Picture("S002", b"jpg")],
+                             model="gemini-3.1-pro-high")
+    assert text.strip() == "note: 2 slides, sandbox 1, model gemini-3.1-pro-high"

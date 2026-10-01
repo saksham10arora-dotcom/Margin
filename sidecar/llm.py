@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import base64
 import json
+
+_json = json  # `json` is also the request body's name in _gemini_post
 import logging
 import os
 import re
@@ -50,6 +52,10 @@ CLAUDE_MODEL = os.environ.get("MARGIN_CLAUDE_MODEL", "sonnet")
 CLAUDE_DAILY = int(os.environ.get("MARGIN_CLAUDE_DAILY", "30"))
 USAGE_PATH = Path.home() / ".margin" / "usage.json"
 TIMEOUT_SEC = 240
+# A Gemini model that has sent nothing for this long is stuck, not slow: one
+# (3 Flash Preview) sent nothing for minutes while Margin waited out the full
+# TIMEOUT_SEC; a working one streams its first thinking within seconds.
+FIRST_RESPONSE_SEC = 60
 DEFAULT_CHAIN = "gemini,claude,openrouter,gemini-lite"
 # Below this many output tokens a whole note (plus its code) gets cut off, so a
 # nearly empty OpenRouter balance is treated as none.
@@ -241,6 +247,59 @@ def _gemini_lite(prompt, pictures, max_tokens, temperature, progress=None, quali
                    models=[m for m in GEMINI_MODELS if is_lite(m)])
 
 
+class _Reply:
+    """A streamed Gemini answer, gathered into the shape of a plain response."""
+    def __init__(self, status_code: int, payload: dict, text: str = ""):
+        self.status_code, self._payload, self.text = status_code, payload, text or json.dumps(payload)
+
+    def json(self):
+        return self._payload
+
+
+def _gemini_post(url, headers=None, json=None, timeout=None):
+    """One Gemini request, streamed, so a stuck model is told from a slow one:
+    a working model streams its thinking within seconds and then the answer;
+    one that sends nothing for FIRST_RESPONSE_SEC (between any two pieces) is
+    given up on and the next model tried. Returns the whole answer."""
+    body = json
+    deadline = time.monotonic() + TIMEOUT_SEC
+    url = url.replace(":generateContent", ":streamGenerateContent?alt=sse")
+    with httpx.stream("POST", url, headers=headers, json=body,
+                      timeout=httpx.Timeout(FIRST_RESPONSE_SEC, connect=30)) as resp:
+        if resp.status_code != 200:
+            raw = resp.read()
+            try:
+                payload = _json.loads(raw)
+            except ValueError:
+                payload = {"error": {"message": raw[:300].decode(errors="replace")}}
+            return _Reply(resp.status_code, payload, raw.decode(errors="replace"))
+        parts, finish, stray = [], None, []
+        for line in resp.iter_lines():
+            if time.monotonic() > deadline:
+                raise httpx.ReadTimeout(f"no complete answer in {TIMEOUT_SEC}s")
+            if not line.startswith("data:"):
+                stray.append(line)
+                continue
+            event = _json.loads(line[5:])
+            if "error" in event:
+                # Gemini can fail part-way, after HTTP 200 and half a note (seen:
+                # 8,000 characters, then a 503). Treated as the error it is.
+                return _Reply(int(event["error"].get("code") or 503), event)
+            cand = (event.get("candidates") or [{}])[0]
+            parts += cand.get("content", {}).get("parts", [])
+            finish = cand.get("finishReason") or finish
+        if finish is None:
+            # Ended without saying it finished: a cut-off answer is never a note.
+            try:
+                event = _json.loads("\n".join(stray))
+            except ValueError:
+                event = {}
+            if isinstance(event, dict) and "error" in event:
+                return _Reply(int(event["error"].get("code") or 503), event)
+            return _Reply(503, {"error": {"message": "the answer stopped before it finished"}})
+        return _Reply(200, {"candidates": [{"content": {"parts": parts}, "finishReason": finish}]})
+
+
 def _gemini(prompt, pictures, max_tokens, temperature, progress=None, models=None):
     # Google's own docs name the key three ways; people have whichever one.
     keys = [k for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY")
@@ -279,8 +338,10 @@ def _gemini(prompt, pictures, max_tokens, temperature, progress=None, models=Non
             for key in order:
                 try:
                     # The key goes in a header, never the URL: URLs end up in logs.
-                    resp = httpx.post(f"{GEMINI_URL}/{model}:generateContent",
-                                      headers={"x-goog-api-key": key}, json=body, timeout=TIMEOUT_SEC)
+                    call = body if is_lite(model) else {**body, "generationConfig": {
+                        **body["generationConfig"], "thinkingConfig": {"includeThoughts": True}}}  # signs of life
+                    resp = _gemini_post(f"{GEMINI_URL}/{model}:generateContent",
+                                        headers={"x-goog-api-key": key}, json=call)
                 except httpx.HTTPError as e:
                     last, outcome = f"{model}: {type(e).__name__}", "next-model"
                     break

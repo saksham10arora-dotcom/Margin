@@ -31,6 +31,11 @@ Written down so they are not rediscovered the hard way.
   thinner), then updates.
 
 ## Known gaps
+- **The crux** is written with a lecture's first note. Updates add sections and
+  practice items but leave the crux as it was; **Rewrite the notes** or the
+  Crux tab's button writes it again from everything.
+- **Animated slides** (a number grid, a typing animation) keep a capture for
+  each state they were caught in.
 - **Reloading the extension** can lose up to ten seconds of watched time: the
   old copy's last report cannot reach the sidecar once Chrome has cut it off.
   Slides are sent the moment they are captured, so they are not affected.

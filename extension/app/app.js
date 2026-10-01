@@ -539,6 +539,7 @@ class MarginApp {
     const go = shouldAutoCompose({
       reason, coverage: this.watchedFraction(), composed: this.composed, stale: this.stale,
       edited: this.edited, hasContent: this.hasContent(),
+      watchedSec: this.ranges.reduce((sum, [a, b]) => sum + (b - a), 0),
     });
     if (go) this.compose({ background, auto: true });
     return go;

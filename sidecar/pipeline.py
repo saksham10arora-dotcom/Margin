@@ -73,12 +73,32 @@ def _keep_your_edits(session: Session, vault: Path, note_path: Path) -> str | No
     return kept.relative_to(vault).as_posix()
 
 
+KEEP_REWRITES = 5  # earlier versions kept per note, newest first
+
+
+def _keep_previous(note_path: Path) -> None:
+    """Before "Rewrite the notes" replaces a note, keep it in the history
+    folder: a rewrite starts from scratch and can come out with less than the
+    note had grown to."""
+    history = note_path.parent / HISTORY_DIR
+    history.mkdir(parents=True, exist_ok=True)
+    (history / f"{note_path.stem} (before rewrite {time.strftime('%Y-%m-%d %H%M%S')}).md").write_text(note_path.read_text())
+    old = sorted(history.glob(f"{glob_escape(note_path.stem)} (before rewrite *).md"), reverse=True)
+    for extra in old[KEEP_REWRITES:]:
+        extra.unlink()
+
+
+def glob_escape(text: str) -> str:
+    return re.sub(r"([\[\]*?])", r"[\1]", text)
+
+
 def is_running(key: str) -> bool:
     with _running_guard:
         return key in _running
 
 
-def start(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> bool:
+def start(session: Session, vault: Path, choice: dict | None = None, full: bool = False,
+          explicit: bool = False) -> bool:
     """Kick off a compose in the background. False if one is already running
     for this lecture (a double click, or auto-compose racing a manual one); it
     is then run once more afterwards if new material arrives meanwhile."""
@@ -88,7 +108,7 @@ def start(session: Session, vault: Path, choice: dict | None = None, full: bool 
             return False
         _running.add(session.key)
     session.set_status("queued", "Queued")
-    threading.Thread(target=_run_guarded, args=(session, vault, choice, full), daemon=True).start()
+    threading.Thread(target=_run_guarded, args=(session, vault, choice, full, explicit), daemon=True).start()
     return True
 
 
@@ -149,11 +169,12 @@ def _a_model_is_ready() -> bool:
         return True
 
 
-def _run_guarded(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> None:
+def _run_guarded(session: Session, vault: Path, choice: dict | None = None, full: bool = False,
+                 explicit: bool = False) -> None:
     try:
         while True:
-            _run_with_retries(session, vault, choice, full)
-            full = False  # what arrived meanwhile is added, not a second rewrite
+            _run_with_retries(session, vault, choice, full, explicit)
+            full = explicit = False  # what arrived meanwhile is added, not a second rewrite
             with _running_guard:
                 again = session.key in _again
                 _again.discard(session.key)
@@ -180,16 +201,17 @@ def _run_guarded(session: Session, vault: Path, choice: dict | None = None, full
             _again.discard(session.key)
 
 
-def _run_with_retries(session: Session, vault: Path, choice: dict | None = None, full: bool = False) -> dict:
+def _run_with_retries(session: Session, vault: Path, choice: dict | None = None, full: bool = False,
+                      explicit: bool = False) -> dict:
     for wait in RETRY_WAITS_SEC:
         try:
-            return run(session, vault, choice=choice, full=full)
+            return run(session, vault, choice=choice, full=full, explicit=explicit)
         except Busy as e:
             logger.warning("Every engine busy for %s, retrying in %ss: %s", session.key, wait, e)
             at = time.strftime("%H:%M", time.localtime(time.time() + wait))
             session.set_status("queued", f"Every model is busy right now. Trying again at {at}.")
             time.sleep(wait)
-    return run(session, vault, choice=choice, full=full)
+    return run(session, vault, choice=choice, full=full, explicit=explicit)
 
 
 def _relink_neighbours(vault: Path, meta: dict) -> None:
@@ -336,15 +358,18 @@ def _note_words(text: str) -> int:
 
 
 def run(session: Session, vault: Path, quality: str = "any", choice: dict | None = None,
-        full: bool = False) -> dict:
+        full: bool = False, explicit: bool = False) -> dict:
     """Write the note. When it exists and Margin knows what it was written
-    from, add what is new (run_update); `full` (your "Rewrite the notes")
-    writes it all again."""
+    from, add what is new (run_update); `full` writes it all again. A full
+    rewrite you asked for (`explicit`, "Rewrite the notes") keeps the version
+    it replaces in the history folder; one Margin decided on (upgrading a
+    quick note, a note from before 2.10.5) keeps the note if it comes out
+    thinner."""
     meta = session.meta
     note_path = library.lecture_note_path(vault, meta)
     if not full and note_path.exists() and session.knows_what_note_covers:
         return run_update(session, vault, quality=quality, choice=choice)
-    guard = None if full or not note_path.exists() else note_path.read_text()
+    guard = None if explicit or not note_path.exists() else note_path.read_text()
 
     previous = C.previous_note(vault, meta)
     previous_gist = C.read_frontmatter(previous).get("gist") if previous else None
@@ -436,6 +461,8 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
     kept = _keep_your_edits(session, vault, note_path)
     if kept:
         note = _with_edits_notice(note, kept)
+    elif explicit and note_path.exists():
+        _keep_previous(note_path)
     note_path.write_text(note)
     session.record_written(_digest(note))
     session.mark_composed(rev, *covers)

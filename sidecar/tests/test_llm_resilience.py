@@ -44,7 +44,7 @@ def test_an_overloaded_model_hands_off_to_the_next_one(monkeypatch, calls):
         calls.append((url, headers))
         return overloaded() if "main-flash" in url else ok_gemini()
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     progress = []
     text, engine = llm.generate("prompt", progress=progress.append)
     assert (text, engine) == ("the note", "backup-flash")
@@ -61,7 +61,7 @@ def test_keys_travel_in_a_header_never_the_url(monkeypatch, calls):
         calls.append((url, headers))
         return ok_gemini()
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     llm.generate("prompt")
     url, headers = calls[0]
     assert "key" not in url and headers["x-goog-api-key"].startswith("key-")
@@ -77,7 +77,7 @@ def test_a_spent_key_moves_to_the_next_key_not_the_next_model(monkeypatch, calls
             return FakeResponse(429, {"error": {"message": "quota"}})
         return ok_gemini()
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     assert llm.generate("prompt")[1] == "main-flash"
     assert [k[:7] for k in calls] == ["key-one", "key-two"]
 
@@ -85,7 +85,7 @@ def test_a_spent_key_moves_to_the_next_key_not_the_next_model(monkeypatch, calls
 def test_everything_busy_is_reported_as_busy_so_it_is_retried(monkeypatch, calls):
     monkeypatch.setattr(llm, "GEMINI_MODELS", ["main-flash"])
     monkeypatch.setattr(llm, "engine_chain", lambda: ["gemini"])
-    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: overloaded())
+    monkeypatch.setattr(llm, "_gemini_post", lambda *a, **k: overloaded())
     with pytest.raises(llm.Busy):
         llm.generate("prompt")
 
@@ -98,7 +98,7 @@ def test_a_bad_request_is_not_retried(monkeypatch, calls):
         calls.append(url)
         return FakeResponse(400, {"error": {"message": "API key not valid"}})
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     with pytest.raises(llm.EngineError) as err:
         llm.generate("prompt")
     assert not isinstance(err.value, llm.Busy)
@@ -135,7 +135,7 @@ def test_a_network_failure_counts_as_busy(monkeypatch, calls):
     def post(*a, **k):
         raise httpx.ConnectError("offline")
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     with pytest.raises(llm.Busy):
         llm.generate("prompt")
 
@@ -149,7 +149,7 @@ def test_a_busy_spell_is_waited_out_and_the_note_still_written(tmp_path, monkeyp
     session = sessions.open_session(UDEMY, root=tmp_path)
     attempts = []
 
-    def run(s, vault, choice=None, full=False):
+    def run(s, vault, choice=None, **_):
         attempts.append(s.status.get("message", ""))
         if len(attempts) < 3:
             raise llm.Busy("overloaded")
@@ -167,7 +167,7 @@ def test_a_note_asked_for_while_one_is_being_written_is_written_again(tmp_path, 
     session = sessions.open_session(UDEMY, root=tmp_path)
     runs = []
 
-    def run(s, vault, choice=None, full=False):
+    def run(s, vault, choice=None, **_):
         runs.append(1)
         rev = s.material_rev  # what this note is written from, as in the real run()
         if len(runs) == 1:
@@ -227,7 +227,7 @@ def test_full_quality_leaves_out_the_lite_models(monkeypatch, calls):
         calls.append(url.split("/")[-1])
         return overloaded() if "main-flash:" in url else ok_gemini()
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     with pytest.raises(llm.Busy):
         llm.generate("prompt", quality="full")
     assert all("lite" not in c for c in calls)
@@ -302,7 +302,7 @@ def test_a_cut_off_answer_moves_to_the_next_model(monkeypatch, calls):
                                                       "content": {"parts": [{"text": "## Check yourself\n> [!question]- What is"}]}}]})
         return ok_gemini("<<<NOTE>>>\nfull\n<<<GIST>>>\ng")
 
-    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(llm, "_gemini_post", post)
     text, engine = llm.generate("prompt")
     assert engine == "backup-flash" and "full" in text
     assert sent[0] == llm.GEMINI_MAX_OUTPUT  # thinking has room, the answer too
@@ -316,3 +316,65 @@ def test_an_incomplete_note_is_not_accepted(monkeypatch, calls):
     monkeypatch.setitem(llm._ENGINES, "second", lambda *a: ("<<<NOTE>>>\nwhole\n<<<GIST>>>\ng\n<<<END>>>", "second-model"))
     assert llm.generate("p", accept=C.is_complete)[1] == "second-model"
     assert C.is_complete("**GIST**\nx") and not C.is_complete("## just a note")
+
+
+def test_a_model_that_sends_nothing_is_left_for_the_next(monkeypatch, calls):
+    # Gemini 3 Flash Preview sent nothing for minutes while Margin waited out
+    # the full timeout; streamed, its silence shows within FIRST_RESPONSE_SEC.
+    monkeypatch.setattr(llm, "GEMINI_MODELS", ["stuck-flash", "backup-flash"])
+
+    def post(url, headers=None, json=None, timeout=None):
+        calls.append(url)
+        if "stuck-flash" in url:
+            raise httpx.ReadTimeout("nothing for 60s")
+        return ok_gemini()
+
+    monkeypatch.setattr(llm, "_gemini_post", post)
+    assert llm.generate("prompt") == ("the note", "backup-flash")
+    assert [u.split("/")[-1] for u in calls] == ["stuck-flash:generateContent", "backup-flash:generateContent"]
+
+
+class FakeStream:
+    """httpx.stream's answer: an SSE body, as Gemini sends it."""
+    def __init__(self, lines, status=200):
+        self.lines, self.status_code = lines, status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def iter_lines(self):
+        return iter(self.lines)
+
+    def read(self):
+        return "\n".join(self.lines).encode()
+
+
+def _event(payload):
+    return "data: " + json.dumps(payload)
+
+
+def test_an_answer_cut_off_by_an_error_mid_stream_is_never_taken(monkeypatch, calls):
+    # Seen on Gemini 3.6 Flash: HTTP 200, thinking, 8,000 characters of note,
+    # then {"error": 503}. Taken as finished, a half note would be saved.
+    monkeypatch.setattr(llm, "GEMINI_MODELS", ["main-flash", "backup-flash"])
+    cut = [_event({"candidates": [{"content": {"parts": [{"text": "half a no", "thought": False}]}}]}),
+           _event({"error": {"code": 503, "message": "This model is currently experiencing high demand."}})]
+    whole = [_event({"candidates": [{"content": {"parts": [{"text": "the whole note"}]}, "finishReason": "STOP"}]})]
+
+    def stream(method, url, **kw):
+        calls.append(url)
+        return FakeStream(cut if "main-flash" in url else whole)
+
+    monkeypatch.setattr(llm.httpx, "stream", stream)
+    assert llm.generate("prompt") == ("the whole note", "backup-flash")
+
+
+def test_an_answer_that_ends_without_finishing_is_never_taken(monkeypatch, calls):
+    monkeypatch.setattr(llm, "GEMINI_MODELS", ["main-flash", "backup-flash"])
+    unfinished = [_event({"candidates": [{"content": {"parts": [{"text": "half a no"}]}}]})]
+    whole = [_event({"candidates": [{"content": {"parts": [{"text": "the whole note"}]}, "finishReason": "STOP"}]})]
+    monkeypatch.setattr(llm.httpx, "stream", lambda method, url, **kw: FakeStream(unfinished if "main-flash" in url else whole))
+    assert llm.generate("prompt") == ("the whole note", "backup-flash")

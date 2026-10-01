@@ -152,15 +152,21 @@ export function coverage(ranges, duration) {
  * - it ended, having been mostly watched, or
  * - the viewer is leaving it (next lecture) having watched most of it.
  */
-export function shouldAutoCompose({ reason, coverage: cov, composed, stale = false, edited = false, hasContent }) {
+// A first note is written once you watched this much of a lecture, or this
+// many minutes of it: a nine-hour one-shot is never 60% watched in one go.
+export const FIRST_NOTE_MINUTES = 20;
+
+export function shouldAutoCompose({ reason, coverage: cov, composed, stale = false, edited = false, hasContent,
+  watchedSec = 0 }) {
   if (!hasContent) return false;
   // The note exists: rewrite it only if something new was captured since
   // (a slide, or speech from a part not heard before), so rewatching fills
   // the note in instead of rewriting it for nothing. Never behind your back
   // once you have edited it.
   if (composed) return stale && !edited && (reason === 'ended' || reason === 'leaving');
-  if (reason === 'ended') return cov >= 0.6;
-  if (reason === 'leaving') return cov >= 0.75;
+  const enough = watchedSec >= FIRST_NOTE_MINUTES * 60;
+  if (reason === 'ended') return cov >= 0.6 || enough;
+  if (reason === 'leaving') return cov >= 0.75 || enough;
   return false;
 }
 

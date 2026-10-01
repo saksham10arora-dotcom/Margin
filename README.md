@@ -109,9 +109,11 @@ transcribes the audio on your Mac. Installed them later? `./scripts/setup.sh --w
    and unzip it over your Margin folder.
 2. Run `./install.sh` again. It offers the notes folder you already use, keeps your keys and model
    order, and restarts Margin's helper so the new version is the one running.
-3. Reload Margin in `chrome://extensions` (the circular arrow on its card).
+3. That's it: from 2.10.6 on, the extension notices the new version in its folder and reloads
+   itself the next time no lecture is open (a tab closing is when it checks). Updating from
+   an older version, reload it once yourself in `chrome://extensions` (the circular arrow).
 
-Margin does not update itself, so watch the repo's releases if you want to hear about new ones.
+Margin does not download updates itself, so watch the repo's releases if you want to hear about new ones.
 
 ## Choosing models
 

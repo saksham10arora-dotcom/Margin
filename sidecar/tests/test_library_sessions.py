@@ -582,6 +582,7 @@ def test_watching_more_of_a_short_lecture_changes_nothing(tmp_path):
 
 def test_the_lecture_knows_what_is_new_since_its_note(tmp_path):
     s = open_session(UDEMY, root=tmp_path)
+    s.add_asr_cues([{"start": 10, "end": 19, "text": "heard by Margin"}])  # no captions: new minutes are new speech
     s.mark_watched(0, 600)
     first = s.add_frame(100, _slide("Expected return", A))
     s.mark_composed(s.material_rev)
@@ -591,3 +592,36 @@ def test_the_lecture_knows_what_is_new_since_its_note(tmp_path):
     ranges, frames = s.new_since_note()
     assert ranges == [[600, 900]]
     assert [f["id"] for f in frames] == [new["id"]] and new["id"] != first["id"]
+
+
+def test_the_note_is_out_of_date_exactly_when_it_lacks_something(tmp_path):
+    # "Out of date" was a counter of its own and could disagree with what the
+    # note covers: a note missing three minutes and two slides said up to date.
+    s = _long_lecture(tmp_path)
+    s.mark_watched(0, 600)
+    s.mark_composed(s.material_rev, watched=[[0, 300]])  # written from the first five minutes only
+    assert s.stale
+
+
+def test_watching_more_of_a_short_captioned_lecture_adds_only_its_slides(tmp_path):
+    # Its note was written from all its captions: newly watched minutes are
+    # already in it, and sending them again only invites repetition.
+    s = open_session(UDEMY, root=tmp_path)
+    s.set_caption_cues([{"start": t, "end": t + 9, "text": "word " * 5} for t in range(0, 600, 10)], "udemy-captions")
+    s.mark_watched(0, 120)
+    s.mark_composed(s.material_rev)
+    s.mark_watched(120, 500)
+    assert s.new_since_note() == ([], []) and not s.stale
+    new = s.add_frame(300, _slide("Portfolio risk", B))
+    ranges, frames = s.new_since_note()
+    assert ranges == [] and [f["id"] for f in frames] == [new["id"]] and s.stale
+
+
+def test_watching_more_of_a_lecture_without_captions_adds_what_was_heard(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_asr_cues([{"start": 0, "end": 9, "text": "first part"}])
+    s.mark_watched(0, 120)
+    s.mark_composed(s.material_rev)
+    s.mark_watched(120, 400)
+    s.add_asr_cues([{"start": 130, "end": 139, "text": "second part"}])
+    assert s.new_since_note()[0] == [[120, 400]] and s.stale

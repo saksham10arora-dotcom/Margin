@@ -923,6 +923,13 @@ class Session:
             return [], []
         known = set(material.get("composed_frames") or [])
         new_frames = [f for f in self.frames if f["id"] not in known]
+        # Newly watched minutes are new material only where the note could not
+        # have them: speech Margin heard itself (no captions), or a lecture too
+        # long for its note to hold whole. A shorter captioned lecture's note
+        # was written from all of its captions already.
+        heard = self.transcript_source == "asr"
+        if not (heard or len(self.transcript_text()) > NOTE_TRANSCRIPT_CHARS):
+            return [], new_frames
         return subtract_ranges(self.watched, material["composed_watched"]), new_frames
 
     @property
@@ -931,9 +938,16 @@ class Session:
 
     @property
     def stale(self) -> bool:
-        """Material has arrived since the note was last written."""
+        """The note lacks something: material arrived since it was written, or
+        (when Margin knows what it was written from) parts or slides it does
+        not cover."""
         material = self._read("material.json", {})
-        return material.get("rev", 0) > material.get("composed_rev", 0)
+        if material.get("rev", 0) > material.get("composed_rev", 0):
+            return True
+        if "composed_watched" in material:
+            ranges, frames = self.new_since_note()
+            return bool(ranges or frames)
+        return False
 
     # --- after a note is written ---------------------------------------------
 

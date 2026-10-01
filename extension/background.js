@@ -31,9 +31,11 @@ async function handle(msg, sender) {
       return fetchCaptionText(msg.url);
     case 'lecture-state':
       return rememberLecture(sender.tab?.id, msg);
-    case 'close-lecture':
+    case 'close-lecture': {
+      const done = await closeLecture(msg); // the note first: a reload would cut it off
       await rememberLecture(sender.tab?.id, {});
-      return closeLecture(msg);
+      return done;
+    }
     case 'open-settings': {
       const hash = typeof msg.hash === 'string' && /^[\w=.-]*$/.test(msg.hash) ? msg.hash : '';
       await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (hash ? `#${hash}` : '') });
@@ -57,7 +59,10 @@ async function rememberLecture(tabId, state) {
   if (tabId === undefined) return { ok: false };
   const id = `lecture:${tabId}`;
   if (state?.key) await chrome.storage.session.set({ [id]: { key: state.key, range: state.range, duration: state.duration, write: state.write } });
-  else await chrome.storage.session.remove(id);
+  else {
+    await chrome.storage.session.remove(id);
+    await updateFromFolder(); // a panel closed: perhaps nothing is being watched now
+  }
   return { ok: true };
 }
 
@@ -66,7 +71,32 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   const state = (await chrome.storage.session.get(id))[id];
   await chrome.storage.session.remove(id);
   if (state) await closeLecture(state);
+  lastUpdateCheck = 0; // a tab closing is the moment to check
+  await updateFromFolder();
 });
+
+// Margin runs from its folder ("Load unpacked"): ./install.sh puts a new
+// version there, but Chrome keeps running the old one until it is reloaded,
+// which nobody knows to do. So the worker compares the folder's version with
+// its own and reloads itself, only once no tab is watching a lecture: nothing
+// in progress is interrupted.
+let lastUpdateCheck = 0;
+async function updateFromFolder() {
+  if (Date.now() - lastUpdateCheck < 30000) return false;
+  lastUpdateCheck = Date.now();
+  try {
+    const res = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' });
+    const onDisk = (await res.json()).version;
+    if (!onDisk || onDisk === chrome.runtime.getManifest().version) return false;
+    const watching = Object.keys(await chrome.storage.session.get(null)).some((k) => k.startsWith('lecture:'));
+    if (watching) return false;
+    chrome.runtime.reload();
+    return true;
+  } catch {
+    return false; // checked again at the next tab close
+  }
+}
+chrome.runtime.onStartup.addListener(updateFromFolder);
 
 // The tab closed, or Margin's panel: the page cannot wait for anything, so this
 // worker, which outlives it, records the last stretch watched and only then
