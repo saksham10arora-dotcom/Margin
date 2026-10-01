@@ -20,6 +20,7 @@ full of escaped newlines does not.
 """
 from __future__ import annotations
 
+import difflib
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -500,22 +501,90 @@ def _heading_seconds(heading: str) -> int | None:
     return int(a) * 3600 + int(b) * 60 + int(c) if c else int(a) * 60 + int(b)
 
 
-def _words(body: str) -> int:
-    return len(re.sub(r"!\[\[[^\]]*\]\]|\{\{slide:[^}]+\}\}", " ", body).split())
-
-
 def _title(heading: str) -> str:
     """A heading without its timestamp (or timestamp link), for comparing topics."""
     return re.sub(r"\s+", " ", re.sub(r"\[\d+:\d\d(?::\d\d)?\](?:\([^)]*\))?", "", heading)).strip().lower()
+
+
+_EMBED = re.compile(r"^!\[\[[^\]]+\]\]$")
+_COMMON = frozenset("the and for that this with from are was were has have its into can not but which when where "
+                    "what then than they their there these those also each only more most such will would should "
+                    "could been being does done over under very just like".split())
+
+
+def _distinct(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in _COMMON}
+
+
+def _said_again(line: str, new: str) -> bool:
+    """Whether a line an update left out of a section is in its version in
+    other words: most of its words in one paragraph of it or, for a formula, a
+    near copy of one of its lines. A slide is said again only by being there."""
+    if _EMBED.match(line):
+        return False
+    words = _distinct(line)
+    if len(words) >= 4:
+        return any(len(words & _distinct(p)) >= 0.85 * len(words) for p in re.split(r"\n\s*\n", new))
+    flat = re.sub(r"\s+", "", line)
+    return any(difflib.SequenceMatcher(None, flat, re.sub(r"\s+", "", l)).ratio() >= 0.8
+               for l in new.splitlines() if l.strip())
+
+
+def _keep_what_it_said(old: str, new: str, exact: bool = False) -> str:
+    """What an update wrote for a topic, with whatever of the section it left
+    out put back where it was (after the last line the two share), so an
+    update only ever adds to a section. An update that wrote only the new part
+    gets the section first, then that; one that wrote the section again in its
+    own words (asked not to, a model still does now and then, and drops a
+    slide) keeps its words, unless `exact`: in a note you edited, every line of
+    yours stays as you wrote it."""
+    out = new.split("\n")
+    # Which lines the update wrote: each matches one old line at most, so a
+    # line the section repeats (every case's "where ...") keeps its copies.
+    theirs = [True] * len(out)
+    mine = [False] * len(out)  # the lines put back
+    written = {l.strip() for l in out}
+    old_lines = old.split("\n")
+    at = 0
+    for i, line in enumerate(old_lines):
+        s = line.strip()
+        if not s:
+            continue
+        found = next((j for j in range(at, len(out)) if theirs[j] and out[j].strip() == s), None)
+        if found is None:
+            found = next((j for j in range(len(out)) if theirs[j] and out[j].strip() == s), None)
+        if found is not None:
+            theirs[found] = False
+            at = found + 1
+            continue
+        if s not in written and ((len(s) >= 20 and s in new) or (not exact and _said_again(s, new))):
+            continue
+        piece = ([""] if i > 0 and not old_lines[i - 1].strip() else []) + [line] + \
+                ([""] if i + 1 < len(old_lines) and not old_lines[i + 1].strip() else [])
+        out[at:at] = piece
+        theirs[at:at] = [False] * len(piece)
+        mine[at:at] = [True] * len(piece)
+        at += len(piece)
+    # Where a line put back meets one the update wrote, a blank line between
+    # them, unless the section had them together: else Markdown joins them.
+    together = {(a.strip(), b.strip()) for a, b in zip(old_lines, old_lines[1:])}
+    joined = []
+    for j, line in enumerate(out):
+        if j and line.strip() and out[j - 1].strip() and mine[j] != mine[j - 1] \
+                and (out[j - 1].strip(), line.strip()) not in together:
+            joined.append("")
+        joined.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(joined)).strip("\n")
 
 
 def merge_update(note: str, additions: str, protect: bool = False, same_topic_sec: int = 10) -> str:
     """Add an update's sections to a note. A new topic goes in at its time in
     the lecture; a topic the note has (the same title, or a start within
     `same_topic_sec`: the update is told to repeat both when it adds to a
-    section) is replaced only by a fuller one, and never in a note you edited
-    (`protect`); items for the practice sections at the end are added after
-    the ones there. Nothing else in the note changes, and no topic is dropped."""
+    section) gets what the update adds to it, and in a note you edited
+    (`protect`) your words stay exactly as they are; items for the practice
+    sections at the end are added after the ones there. Nothing else in the
+    note changes, and nothing in it is dropped."""
     head, old = _sections(note)
     _, new = _sections("\n" + additions.strip() + "\n")
     lead = [s for s in old if _end_name(s[0]) is None and _heading_seconds(s[0]) is None]
@@ -539,8 +608,8 @@ def merge_update(note: str, additions: str, protect: bool = False, same_topic_se
                      if _title(s[0]) == _title(heading) or abs(_heading_seconds(s[0]) - t) <= same_topic_sec), None)
         if twin is None:
             topics.append((heading, body))
-        elif not protect and _words(body) >= _words(topics[twin][1]):
-            topics[twin] = (heading, body)
+        else:
+            topics[twin] = (topics[twin][0], _keep_what_it_said(topics[twin][1], body, exact=protect))
     topics.sort(key=lambda s: _heading_seconds(s[0]))
     order = {n: i for i, n in enumerate(END_SECTIONS)}
     ends.sort(key=lambda s: order.get(_end_name(s[0]), len(order)))
@@ -593,9 +662,10 @@ Write notes for these parts ONLY, to be added to the note above. Do not write th
   `flowchart TD`, every node label in double quotes) where there is a process or relationship, a
   table when comparing things, and a slide embedded on its own line as `{{{{slide:S003}}}}` where it
   carries what words cannot.
-- If a topic already has a section in the note above and these parts teach it more fully, write
-  that section again with the SAME heading and timestamp, keeping everything it already says and
-  adding what these parts add. Otherwise never repeat what the note already says.
+- If these parts teach more of a topic that already has a section in the note above, write that
+  section's heading again (the SAME heading and timestamp) with ONLY what these parts add under it:
+  it is added after what the section already says. Never write a section of the note again, and
+  never repeat what the note already says.
 - No abstract, no "The idea", no crux: the note has them.
 - Then, only where these parts give new material, the practice sections with ONLY the new items:
   `## Worked example` (use the lecture's own numbers; if the numbers are yours, title it

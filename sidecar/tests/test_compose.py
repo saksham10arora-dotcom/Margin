@@ -284,17 +284,114 @@ def test_whats_new_is_added_in_lecture_order_and_nothing_else_moves():
     assert "- **Algorithm**: a finite sequence of steps." in merged            # key terms kept
 
 
-def test_a_section_is_never_replaced_by_a_thinner_one():
+def test_a_section_is_never_made_thinner():
     thinner = "## Introduction [00:00]\nAlgorithms.\n"
     merged = C.merge_update(NOTE_SO_FAR, thinner)
-    assert "five properties, with examples" in merged and "\nAlgorithms.\n" not in merged
+    assert "five properties, with examples" in merged
 
 
-def test_a_note_you_edited_only_gains_new_sections():
-    merged = C.merge_update(NOTE_SO_FAR, ADDITIONS, protect=True)
+# The Master Theorem section of a real DAA note, and the fuller version an
+# update wrote of it: longer, so it replaced the old one, and with it went
+# two of its slides and what each case means.
+MASTER_BEFORE = """# DAA
+
+## Master Theorem [43:36]
+The **Master Theorem** solves divide-and-conquer recurrences.
+
+![[assets/03-S187.jpg|720]]
+
+The standard recurrence relation is:
+
+$$T(n) = a T\\left(\\frac{n}{b}\\right) + f(n)$$
+where $T(n)$ is the total running time, $a$ is the number of subproblems, $b$ is the factor by which the problem size is divided, and $f(n)$ is the cost of dividing and combining.
+
+*   **Case 1**: If $f(n) = O(n^{\\log_b a - \\epsilon})$, then:
+    $$T(n) = \\Theta(n^{\\log_b a})$$
+    where the symbols match the standard recurrence parameters.
+    This case says that if the recursive subproblems dominate the computation, the overall time complexity is determined by the subproblem term.
+
+![[assets/03-S189.jpg|720]]
+
+*   **Case 2**: If $f(n) = \\Theta(n^{\\log_b a})$, then:
+    $$T(n) = \\Theta(n^{\\log_b a} \\log n)$$
+    where the symbols match the standard recurrence parameters.
+
+## Sorting [01:20:32]
+Bubble sort swaps neighbours.
+"""
+
+MASTER_UPDATE = """## Master Theorem [43:36]
+The **Master Theorem** solves divide-and-conquer recurrences.
+
+The standard recurrence relation is:
+
+$$T(n) = a T\\left(\\frac{n}{b}\\right) + f(n)$$
+where:
+*   $T(n)$ is the total running time.
+*   $a$ is the number of subproblems.
+*   $b$ is the factor by which the problem size is divided.
+*   $f(n)$ is the cost of dividing and combining.
+
+*   **Case 1**: If $f(n) = O(n^{\\log_b a - \\epsilon})$, then:
+    $$T(n) = \\Theta(n^{\\log_b a})$$
+    where the symbols match the standard recurrence parameters.
+
+*   **Case 2**: If $f(n) = \\Theta(n^{\\log_b a})$, then:
+    $$T(n) = \\Theta(n^{\\log_b a} \\log n)$$
+    where the symbols match the standard recurrence parameters.
+
+### The regularity condition in Case 3
+Case 3 also needs $a f(n/b) \\le c f(n)$ for some constant $c < 1$.
+
+![[assets/03-S196.jpg|720]]
+"""
+
+
+def test_adding_to_a_topic_keeps_every_slide_and_point_it_had():
+    merged = C.merge_update(MASTER_BEFORE, MASTER_UPDATE)
+    master = merged.split("## Master Theorem [43:36]")[1].split("## Sorting")[0]
+    # Nothing it had is lost, and each slide is back where it was.
+    assert master.index("solves") < master.index("03-S187") < master.index("The standard recurrence")
+    assert master.index("subproblem term.") < master.index("03-S189") < master.index("**Case 2**")
+    assert master.index("where the symbols") < master.index("This case says") < master.index("**Case 2**")
+    # What it added is there, and what it only said again in other words is not doubled.
+    assert "regularity condition" in master and "03-S196" in master
+    assert "where $T(n)$ is the total running time, $a$" not in master
+    assert "\n\n\n" not in merged
+    assert "Bubble sort swaps neighbours." in merged
+
+
+def test_a_section_that_repeats_a_line_keeps_its_order_when_added_to():
+    # Each case of the real Master Theorem section ends with the same "where"
+    # line; the copy put back for case 1 was taken for case 2's and case 3's,
+    # and case 2 came out after case 3, both missing that line.
+    update = "## Master Theorem [43:36]\nCase 3 also needs the regularity condition.\n\n![[assets/03-S196.jpg|720]]\n"
+    merged = C.merge_update(MASTER_BEFORE, update)
+    master = merged.split("## Master Theorem [43:36]\n")[1].split("\n## Sorting")[0]
+    old = MASTER_BEFORE.split("## Master Theorem [43:36]\n")[1].split("\n## Sorting")[0]
+    assert master.strip() == old.strip() + "\n\nCase 3 also needs the regularity condition.\n\n![[assets/03-S196.jpg|720]]"
+
+
+def test_an_update_with_only_the_new_part_of_a_topic_adds_it_after_what_is_there():
+    merged = C.merge_update(MASTER_BEFORE, "## Sorting [01:20:32]\nIts optimised version stops early on a sorted array, so it runs in O(n).\n")
+    sorting = merged.split("## Sorting [01:20:32]")[1]
+    assert sorting.index("Bubble sort swaps neighbours.") < sorting.index("stops early")
+
+
+def test_a_note_you_edited_gains_what_is_new_and_keeps_your_words():
+    mine = NOTE_SO_FAR.replace("Sorting puts things in order.", "Sorting: my own words, put in order.")
+    rewritten = "## Sorting [20:00]\nSorting puts things in order. Merge sort splits and merges, in n log n.\n"
+    merged = C.merge_update(mine, ADDITIONS + "\n" + rewritten, protect=True)
     assert "## Master Theorem [10:00]" in merged                               # new topic added
-    assert "merge sort splits" not in merged                                   # your Sorting section kept as is
+    assert "Sorting: my own words, put in order." in merged                    # your words, as you wrote them
+    assert "merge sort splits" in merged                                       # and what the update adds
     assert "Which case is 2T" in merged                                        # new question added
+
+
+def test_your_words_stay_even_when_an_update_says_them_another_way():
+    note = "# L\n\n## Risk [01:40]\nVariance is how far returns swing around their mean, squared.\n"
+    update = "## Risk [01:40]\nVariance measures how far returns swing around their mean, squared.\n"
+    assert "Variance is how far returns swing" in C.merge_update(note, update, protect=True)
 
 
 def test_a_new_topic_close_in_time_to_an_old_one_is_still_added():

@@ -25,10 +25,14 @@ Written down so they are not rediscovered the hard way.
 ## Adding to a note (2.10.5)
 - "Add what's new" and the automatic updates write only the parts watched since
   the note was written (and slides kept since), with the note so far as context,
-  and merge them in: new topics at their time, a topic's section replaced only
-  by a fuller one, new practice items appended, nothing else touched. A note
+  and merge them in: new topics at their time, more on a topic added after what
+  its section says, new practice items appended, nothing else touched. A note
   from before 2.10.5 gets one guarded full write first (kept if it comes out
   thinner), then updates.
+- 2.10.7: a section is only ever added to. 2.10.5 took a model's longer
+  rewrite of a section in place of it, and a real one dropped three of the
+  Master Theorem's slides. Updates now write only what is new for a topic, and
+  anything a model still leaves out of a section is put back where it was.
 
 ## Known gaps
 - **The crux** is written with a lecture's first note. Updates add sections and
