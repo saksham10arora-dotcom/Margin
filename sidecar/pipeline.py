@@ -533,12 +533,32 @@ def run_update(session: Session, vault: Path, quality: str = "any", choice: dict
     if not edited:
         session.record_written(_digest(note))  # still Margin's own: later updates may improve its sections
     session.mark_composed(rev, *covers)
+    if C.new_topics(old, note):
+        session.set_status("composing", "Updating the crux with the new topics")
+        _refresh_crux(session, note_path, note, edited)
     if meta.get("course_title"):
         write_course_index(vault, meta)
     done = {**done, "engine": comp.engine, "slides_embedded": slide_files, "added": what}
     session.set_status("done", f"Added {what} to the notes" if additions.strip() else "Notes ready: nothing new worth adding",
                        result=done, resumed=False)
     return done
+
+
+def _refresh_crux(session: Session, note_path: Path, note: str, edited: bool) -> None:
+    """New topics can change what matters most in a lecture, so the crux is
+    written again from the whole note: into the note, or only into the panel
+    for a note you edited. A busy model leaves the crux it had."""
+    try:
+        crux, engine = study.make_crux(note, session.meta.get("lecture_title") or note_path.stem)
+    except Exception as e:  # noqa: BLE001 -- the note is written; the crux can wait for the next topic
+        logger.warning("crux for %s not refreshed: %s", session.key, e)
+        return
+    crux = C.link_timestamps(crux, session.meta)
+    session.save_study("crux", {"crux": crux, "engine": engine})
+    if not edited:
+        note = study.with_crux(note, crux)
+        note_path.write_text(note)
+        session.record_written(_digest(note))
 
 
 # --- course index --------------------------------------------------------------

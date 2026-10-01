@@ -54,7 +54,8 @@ def crux_in_note(note: str) -> str | None:
 
 
 def make_crux(note: str, title: str) -> tuple[str, str]:
-    """A crux for a note written before notes had one. Returns (crux, engine)."""
+    """A crux from a note: one written before notes had one, or one an update
+    gave new topics. Returns (crux, engine)."""
     prompt = (f'You are Margin. Below is a study note for the lecture "{title}". Write its crux.\n\n'
               f"{C.CRUX_RULES}\nWrite only the crux: no preamble, no heading, no closing remark. "
               f"Never use em dashes.\n\n<<<NOTE\n{strip_note_chrome(note)}\nNOTE>>>")

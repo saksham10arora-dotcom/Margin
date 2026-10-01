@@ -65,6 +65,7 @@ def client(tmp_path, monkeypatch):
     (tmp_path / ".obsidian").mkdir()  # the vault's parent is an Obsidian vault
     monkeypatch.setattr(sessions, "SESSIONS_ROOT", tmp_path / "sessions")
     monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (CANNED, "fake-model"))
+    monkeypatch.setattr(llm, "generate", lambda prompt, pictures=None, **kw: ("The crux.", "fake-model"))
     main.app.dependency_overrides[main.get_vault_path] = lambda: vault
     yield TestClient(main.app), vault
     main.app.dependency_overrides.clear()
@@ -509,6 +510,75 @@ def test_adding_whats_new_keeps_the_note_and_writes_only_the_new_part(client, mo
     asked.clear()
     _compose_done(api, key)  # nothing watched since: nothing written
     assert asked == [] and note_path.read_text() == note
+
+
+def _update_with(monkeypatch, sections: str):
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
+        f"<<<NOTE>>>\n{sections}\n<<<CODE>>>\nNONE\n<<<END>>>", "fake-model"))
+
+
+def test_an_update_that_adds_a_topic_writes_the_crux_again(client, monkeypatch):
+    # The crux, the lecture's 80/20, was written with the first note and never
+    # again: a nine-hour lecture's crux knew only its first note.
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "crux"}).json()["key"]
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
+        CANNED.replace("<<<GIST>>>", "<<<CRUX>>>\nWeights decide the return.\n<<<GIST>>>"), "fake-model"))
+    sessions.load_session(key).add_asr_cues([{"start": 0, "end": 5, "text": "Today, expected return."}])
+    api.post(f"/session/{key}/watched", json={"start": 0, "end": 60})
+    _compose_done(api, key)
+    note_path = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
+    assert "Weights decide the return." in note_path.read_text()
+    asked = []
+
+    def crux(prompt, pictures=None, **kw):
+        asked.append(prompt)
+        return "Weights decide the return; variance decides the risk [01:40].", "crux-model"
+    monkeypatch.setattr(llm, "generate", crux)
+
+    def watch_and_add(start, end, sections):
+        api.post(f"/session/{key}/watched", json={"start": start, "end": end})
+        sessions.load_session(key).add_asr_cues([{"start": start + 1, "end": start + 5, "text": "More."}])
+        _update_with(monkeypatch, sections)
+        _compose_done(api, key)
+
+    watch_and_add(60, 120, "## Risk [01:40]\nVariance measures how far returns swing.")  # a new topic
+    note = note_path.read_text()
+    assert len(asked) == 1 and "## Risk [01:40]" in asked[0]           # from the whole note, as it is now
+    assert "variance decides the risk" in note and "Weights decide the return.\n" not in note
+    assert "variance decides the risk" in api.get(f"/session/{key}/crux").json()["crux"]
+    assert api.get(f"/session/{key}").json()["edited"] is False         # still Margin's own note
+
+    watch_and_add(120, 180, "## Risk [01:40]\nIts square root is the volatility.")  # more on a topic it has
+    assert len(asked) == 1                                              # the crux stands
+
+    def busy(prompt, pictures=None, **kw):
+        raise llm.Busy("every model is busy")
+    monkeypatch.setattr(llm, "generate", busy)
+    watch_and_add(180, 240, "## Diversification [03:10]\nMixing assets lowers the risk.")
+    note = note_path.read_text()
+    assert "## Diversification [03:10]" in note and "variance decides the risk" in note  # added; crux kept
+    assert api.get(f"/session/{key}").json()["status"]["state"] == "done"
+
+
+def test_a_note_you_edited_keeps_its_crux_and_the_panel_gets_the_new_one(client, monkeypatch):
+    api, vault = client
+    key = api.post("/session", json={**META, "lecture_id": "crux-edited"}).json()["key"]
+    monkeypatch.setattr(C, "generate", lambda prompt, pictures=None, **kw: (
+        CANNED.replace("<<<GIST>>>", "<<<CRUX>>>\nWeights decide the return.\n<<<GIST>>>"), "fake-model"))
+    sessions.load_session(key).add_asr_cues([{"start": 0, "end": 5, "text": "Today, expected return."}])
+    api.post(f"/session/{key}/watched", json={"start": 0, "end": 60})
+    _compose_done(api, key)
+    note_path = vault / "Quant Finance" / "28 - Expected return of the portfolio.md"
+    note_path.write_text(note_path.read_text() + "\nMy own line.\n")
+    monkeypatch.setattr(llm, "generate", lambda prompt, pictures=None, **kw: ("Risk matters too [01:40].", "m"))
+    api.post(f"/session/{key}/watched", json={"start": 60, "end": 120})
+    sessions.load_session(key).add_asr_cues([{"start": 100, "end": 105, "text": "Variance."}])
+    _update_with(monkeypatch, "## Risk [01:40]\nVariance measures how far returns swing.")
+    _compose_done(api, key)
+    note = note_path.read_text()
+    assert "Weights decide the return." in note and "Risk matters too" not in note and "My own line." in note
+    assert "Risk matters too" in api.get(f"/session/{key}/crux").json()["crux"]
 
 
 def test_rewrite_the_notes_still_writes_it_all_again(client, monkeypatch):

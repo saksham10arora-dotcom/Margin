@@ -617,6 +617,14 @@ def merge_update(note: str, additions: str, protect: bool = False, same_topic_se
     return head.rstrip("\n") + "\n\n" + "\n\n".join(parts).rstrip() + "\n"
 
 
+def new_topics(old: str, note: str) -> list[str]:
+    """The topics a note has that an earlier version of it did not."""
+    def topics(text):
+        return [h for h, _ in _sections(text)[1] if _end_name(h) is None and _heading_seconds(h) is not None]
+    had = {_title(h) for h in topics(old)}
+    return [h for h in topics(note) if _title(h) not in had]
+
+
 def _without_frontmatter(note: str) -> str:
     return re.sub(r"\A---\n.*?\n---\n", "", note, count=1, flags=re.DOTALL).strip()
 

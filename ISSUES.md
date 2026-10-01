@@ -33,11 +33,11 @@ Written down so they are not rediscovered the hard way.
   rewrite of a section in place of it, and a real one dropped three of the
   Master Theorem's slides. Updates now write only what is new for a topic, and
   anything a model still leaves out of a section is put back where it was.
+- 2.10.8: an update that adds a topic writes the crux again from the whole
+  note (into the panel only, for a note you edited); one that only adds to
+  topics the note has leaves it. A busy model keeps the crux it had.
 
 ## Known gaps
-- **The crux** is written with a lecture's first note. Updates add sections and
-  practice items but leave the crux as it was; **Rewrite the notes** or the
-  Crux tab's button writes it again from everything.
 - **Animated slides** (a number grid, a typing animation) keep a capture for
   each state they were caught in.
 - **Reloading the extension** can lose up to ten seconds of watched time: the

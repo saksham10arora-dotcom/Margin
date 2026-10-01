@@ -46,7 +46,8 @@ the note (with the lecture's own diagram next to one it drew), its crux, flashca
   from their captions, one click in the Course tab.
 - **The crux, the 80/20.** Its own tab: the one idea the lecture exists to teach,
   the three to six that matter most, what to remember, and the line to keep if you
-  forget everything else. Written with the note, and folded into it in your vault.
+  forget everything else. Written with the note, folded into it in your vault, and
+  written again when an update adds a new topic.
 - **Ask the lecture.** Type a question and get the answer from what was actually
   said, with the moment linked: click it and the video jumps there. Something the
   lecture never covered is said to be so.
