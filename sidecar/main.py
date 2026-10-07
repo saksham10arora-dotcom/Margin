@@ -28,6 +28,7 @@ your notes off localhost.
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 import os
 import re
@@ -103,7 +104,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.10.8"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux
+VERSION = "2.11.0"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux; 2.11: your own notes (Mine tab, voice, pictures, pages you read)
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -327,6 +328,8 @@ def _worth_writing(session, vault_path: Path) -> bool:
 def post_compose(key: str, request: ComposeRequest | None = None,
                  vault_path: Path = Depends(get_vault_path)):
     session = _session_or_404(key)
+    if session.meta.get("platform") == "page":
+        return {"started": False, "skipped": "a page you read holds only your own notes", "status": session.status}
     if request and request.auto and pipeline.note_edited(session, vault_path):
         return {"started": False, "skipped": "edited", "status": session.status}
     if (request and request.auto and session.written_sha
@@ -354,6 +357,108 @@ def get_note(key: str, vault_path: Path = Depends(get_vault_path)):
         "folder": folder,
         "obsidian_uri": library.obsidian_uri(path),
     }
+
+
+# --- your own notes (see mine.py) ----------------------------------------------
+
+MAX_MINE_IMAGES = 8
+MAX_MINE_IMAGE_BYTES = 12_000_000
+MAX_MINE_AUDIO_BYTES = 40_000_000  # about forty minutes of voice
+_PICTURE_KINDS = ((b"\x89PNG", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF8", "gif"))
+_MINE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+               "webm": "audio/webm", "ogg": "audio/ogg", "m4a": "audio/mp4", "mp4": "audio/mp4"}
+
+
+class MinePayload(BaseModel):
+    text: str = ""
+    quote: str | None = None  # what you had selected on the page
+    where: str | None = None  # the heading of the part of the page you were on
+    t: float | None = None  # the moment of the lecture
+    images: list[str] = []  # base64, or data URLs
+    audio: str | None = None  # base64
+    audio_mime: str = "audio/webm"
+
+
+def _decode(data: str, limit: int, what: str) -> bytes:
+    try:
+        raw = base64.b64decode(data.split(",", 1)[1] if data.startswith("data:") else data, validate=False)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail=f"Unreadable {what}")
+    if len(raw) > limit:
+        raise HTTPException(status_code=413, detail=f"That {what} is too big")
+    return raw
+
+
+def _picture_kind(raw: bytes) -> str:
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    kind = next((ext for magic, ext in _PICTURE_KINDS if raw.startswith(magic)), None)
+    if kind is None:
+        raise HTTPException(status_code=400, detail="Only PNG, JPEG, GIF or WebP pictures")
+    return kind
+
+
+@app.post("/session/{key}/mine")
+def add_mine(key: str, payload: MinePayload, vault_path: Path = Depends(get_vault_path)):
+    """A note of your own: typed, pasted or spoken. It goes into the note at
+    once when there is one; a page you read always has one."""
+    session = _session_or_404(key)
+    text = payload.text.strip()[:20000]
+    quote = (payload.quote or "").strip()[:4000] or None
+    if not (text or quote or payload.images or payload.audio):
+        raise HTTPException(status_code=400, detail="Nothing to keep")
+    images = []
+    for data in payload.images[:MAX_MINE_IMAGES]:
+        raw = _decode(data, MAX_MINE_IMAGE_BYTES, "picture")
+        images.append((raw, _picture_kind(raw)))
+    audio = transcript = None
+    if payload.audio:
+        raw = _decode(payload.audio, MAX_MINE_AUDIO_BYTES, "recording")
+        mime = payload.audio_mime.lower()
+        ext = "ogg" if "ogg" in mime else "m4a" if ("mp4" in mime or "m4a" in mime) else "webm"
+        audio = (raw, ext)
+        title = session.meta.get("lecture_title") or ""
+        try:
+            heard = asr.transcribe(raw, prompt=f"{title}.", suffix=f".{ext}")
+            # As for a lecture's audio: "[Music]", "[BLANK_AUDIO]" are not something you said.
+            transcript = " ".join(c["text"] for c in sessions._clean_cues(heard, "voice")) or None
+        except RuntimeError as e:  # no Whisper here, or a recording it cannot read: the voice is still kept
+            logger.warning("Voice note for %s not written down: %s", key, e)
+    entry = session.add_mine(text=text, quote=quote, where=(payload.where or "").strip()[:200] or None,
+                             t=payload.t if payload.t is not None and payload.t >= 0 else None,
+                             images=images, audio=audio, transcript=transcript)
+    path = pipeline.write_mine(session, vault_path)
+    return {"entry": entry, "in_note": path is not None,
+            "note": path.relative_to(vault_path).as_posix() if path else None}
+
+
+@app.get("/session/{key}/mine")
+def list_mine(key: str, vault_path: Path = Depends(get_vault_path)):
+    session = _session_or_404(key)
+    return {"entries": session.mine, "in_note": library.lecture_note_path(vault_path, session.meta).exists()}
+
+
+@app.delete("/session/{key}/mine/{entry_id}")
+def delete_mine(key: str, entry_id: str, vault_path: Path = Depends(get_vault_path)):
+    """Deleted in the panel: out of the session, the note, and the assets folder."""
+    session = _session_or_404(key)
+    gone = session.remove_mine(entry_id)
+    if gone is None:
+        raise HTTPException(status_code=404, detail="No such note of yours")
+    pipeline.write_mine(session, vault_path, remove=entry_id)
+    assets = library.assets_dir(vault_path, session.meta)
+    prefix = library.asset_prefix(session.meta)
+    for name in gone["images"] + ([gone["audio"]] if gone["audio"] else []):
+        (assets / f"{prefix}-{name}").unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/session/{key}/mine/file/{name}")
+def get_mine_file(key: str, name: str):
+    data = _session_or_404(key).mine_file(name)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No such file")
+    return Response(content=data, media_type=_MINE_TYPES.get(name.rsplit(".", 1)[-1], "application/octet-stream"))
 
 
 def _note_or_404(session, vault_path: Path) -> tuple[Path, str]:

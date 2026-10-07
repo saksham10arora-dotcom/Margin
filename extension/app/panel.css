@@ -175,7 +175,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   gap: 4px;
   padding: 0 10px;
   border-bottom: 1px solid var(--line-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.tab { flex: none; }
 .tab {
   position: relative;
   border: 0;
@@ -766,3 +769,85 @@ kbd {
 .anki-help summary { cursor: pointer; width: max-content; }
 .anki-help p { margin: 8px 0 0; line-height: 1.55; color: var(--ink-2); }
 .anki-help a { color: var(--link); }
+
+/* --- mine: your own notes ----------------------------------------------------- */
+
+/* A page that is not a lecture: your notes are all there is. */
+.panel[data-mode="page"] .signals,
+.panel[data-mode="page"] .tabs,
+.panel[data-mode="page"] #auto,
+.panel[data-mode="page"] #more { display: none; }
+
+.composer {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line);
+  transition: box-shadow 0.2s var(--ease);
+}
+.composer:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.composer[data-drop="true"] { box-shadow: inset 0 0 0 2px var(--accent); background: var(--surface-2); }
+.composer textarea {
+  width: 100%; min-height: 64px; max-height: 40vh; resize: vertical; border: 0; outline: none; background: none;
+  color: var(--ink); font: 13.5px/1.5 var(--sans); padding: 2px;
+}
+.composer textarea::placeholder { color: var(--ink-3); }
+.composer-row { display: flex; align-items: center; gap: 4px; }
+.mine-at {
+  flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mine-add { flex: none; height: 32px; padding: 0 16px; }
+.icon-btn.mic[aria-pressed="true"] { background: var(--bad); color: var(--accent-ink); }
+.icon-btn.mic[aria-pressed="true"]:hover { background: var(--bad); }
+
+.mine-quote-chip {
+  display: flex; align-items: flex-start; gap: 6px; padding: 6px 6px 6px 10px;
+  border-radius: var(--r-sm); background: var(--bg); font-size: 12.5px; color: var(--ink-2);
+}
+.mine-quote-chip span {
+  flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.chip-x {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0;
+  border-radius: 999px; background: var(--surface-2); color: var(--ink-2);
+}
+.chip-x:hover { background: var(--line); color: var(--ink); }
+.chip-x svg { width: 12px; height: 12px; }
+
+.mine-attach { display: flex; flex-wrap: wrap; gap: 6px; }
+.attach-pic { position: relative; }
+.attach-pic img {
+  display: block; width: 64px; height: 48px; object-fit: cover; border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.attach-pic .chip-x { position: absolute; top: -6px; right: -6px; }
+.attach-voice {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px;
+  border-radius: 999px; background: var(--bg); font-size: 12px; color: var(--ink-2);
+}
+.attach-voice svg { width: 13px; height: 13px; }
+
+.mine-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.mine-item { padding: 10px 12px 12px; border-radius: var(--r-md); background: var(--surface); }
+.mine-item.entering { animation: enter 0.35s var(--ease) both; }
+.mine-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.mine-time {
+  border: 0; padding: 1px 7px; border-radius: 999px; font: 600 11px/1.6 var(--mono);
+  background: var(--surface-2); color: var(--ink);
+}
+.mine-time:hover { background: var(--accent); color: var(--accent-ink); }
+.mine-where { font-size: 11.5px; font-weight: 600; color: var(--ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mine-del { width: 24px; height: 24px; }
+.mine-del svg { width: 14px; height: 14px; }
+.mine-del[data-armed="true"] { background: var(--bad); color: var(--accent-ink); }
+.mine-quote {
+  margin: 4px 0 6px; padding: 6px 10px; color: var(--ink-2); font-size: 12.5px;
+  border-radius: var(--r-sm); background: var(--bg);
+}
+.mine-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55; }
+.mine-img { display: block; max-width: 100%; margin-top: 8px; border-radius: var(--r-sm); }
+.mine-item audio, .note figure.audio audio { display: block; width: 100%; height: 34px; margin-top: 8px; }
+.mine-said { margin: 6px 0 0; font-size: 12.5px; color: var(--ink-2); font-style: italic; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mine-item.entering { animation: none; }
+}

@@ -79,3 +79,25 @@ describe('highlightPython', () => {
     expect(out).toContain('<span class="n">2</span>');
   });
 });
+
+describe('your own notes in the note', () => {
+  const MINE = `## My notes
+
+%% mine M001 %%
+**[01:40](https://u.com/l#t=100)** Variance is risk, squared.
+![[assets/28-M001.webm]]
+*Said:* check the window size`;
+
+  it('hides the marker on each of them, as Obsidian does', () => {
+    const html = renderMarkdown(MINE, { folder: 'Quant' });
+    expect(html).not.toContain('%%');
+    expect(html).not.toContain('mine M001');
+    expect(html).toContain('Variance is risk, squared.');
+  });
+
+  it('plays a voice note instead of showing a broken picture', () => {
+    const html = renderMarkdown(MINE, { folder: 'Quant' });
+    expect(html).toContain('<audio controls preload="none" data-vault-path="Quant/assets/28-M001.webm">');
+    expect(html).not.toContain('<img data-vault-path="Quant/assets/28-M001.webm"');
+  });
+});

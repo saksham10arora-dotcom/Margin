@@ -34,6 +34,7 @@ PLATFORM_FOLDERS = {
     "coursera": "Coursera",
     "deeplearning": "DeepLearning.AI",
     "local": "Local videos",
+    "page": "Reading",  # pages you read, with your own notes on them
 }
 
 
@@ -58,6 +59,9 @@ def lecture_stem(meta: dict) -> str:
     """`28 - Expected return of the portfolio`, or just the title when the
     platform gives no ordering."""
     title = clean_name(meta.get("lecture_title") or "Untitled lecture")
+    if meta.get("platform") == "page" and meta.get("author"):
+        # A page you read: its site too, so "Introduction" on two sites is two notes.
+        return clean_name(f"{title} ({meta['author']})", limit=110)
     index = meta.get("lecture_index")
     if isinstance(index, int) and index > 0:
         return f"{index:02d} - {title}"

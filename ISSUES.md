@@ -37,7 +37,23 @@ Written down so they are not rediscovered the hard way.
   note (into the panel only, for a note you edited); one that only adds to
   topics the note has leaves it. A busy model keeps the crux it had.
 
+## Your own notes (2.11)
+- The Mine tab, on lectures and on any page you open Margin on. Each note of yours is
+  kept in the session (`mine.json`, pictures and voice in `mine/`) and written into the
+  note as a block with a hidden `%% mine <id> %%` marker, in a "My notes" section at
+  the end. Margin only adds a missing block or removes one you deleted in the panel; it
+  never writes one again, so edits in Obsidian stay. Updates skip the section, a rewrite
+  carries it over, and every write of a note holds a lock so a note added while Margin
+  is writing is never lost. Ids are the moment a note was made, so two pages that share
+  a note file (one title, one site) never mix theirs up.
+
 ## Known gaps
+- **PDFs open in Chrome's own viewer** cannot have Margin on them (Chrome lets no
+  extension into that viewer). A notes site that shows PDFs in its own page works.
+- **Voice notes are written down in English** (Whisper's base.en model). Hinglish is
+  kept as a recording but its words come out rough; the recording is always in the note.
+- **The microphone is asked for once per site**, by the site's name ("youtube.com wants
+  to use your microphone"): Margin records from inside the page you are on.
 - **Animated slides** (a number grid, a typing animation) keep a capture for
   each state they were caught in.
 - **Reloading the extension** can lose up to ten seconds of watched time: the

@@ -844,6 +844,57 @@ class Session:
         with _lock_for(self.key):
             self._write(f"{name}.json", {**value, "made": time.time()})
 
+    # --- your own notes (see mine.py) ------------------------------------------
+
+    @property
+    def mine(self) -> list[dict]:
+        """What you typed, pasted or said yourself, oldest first."""
+        return self._read("mine.json", {}).get("entries", [])
+
+    def add_mine(self, text: str = "", quote: str | None = None, where: str | None = None,
+                 t: float | None = None, images: list[tuple[bytes, str]] = (),
+                 audio: tuple[bytes, str] | None = None, transcript: str | None = None) -> dict:
+        """Keep a note of yours, with its pictures and voice. Its id is the
+        moment it was made: never reused, and never the same as one from
+        another page whose notes share a note file (same title, same site)."""
+        with _lock_for(self.key):
+            store = self._read("mine.json", {})
+            entries = store.get("entries", [])
+            stamp = max(int(time.time() * 1000), store.get("last", 0) + 1)
+            entry_id = f"M{stamp:x}"
+            folder = self.root / "mine"
+            folder.mkdir(exist_ok=True)
+            names = []
+            for i, (data, ext) in enumerate(images, 1):
+                names.append(f"{entry_id}-{i}.{ext}")
+                (folder / names[-1]).write_bytes(data)
+            audio_name = None
+            if audio:
+                audio_name = f"{entry_id}.{audio[1]}"
+                (folder / audio_name).write_bytes(audio[0])
+            entry = {"id": entry_id, "created": time.time(), "text": text, "quote": quote, "where": where,
+                     "t": t, "images": names, "audio": audio_name, "transcript": transcript}
+            self._write("mine.json", {"last": stamp, "entries": [*entries, entry]})
+        return entry
+
+    def remove_mine(self, entry_id: str) -> dict | None:
+        with _lock_for(self.key):
+            store = self._read("mine.json", {})
+            entries = store.get("entries", [])
+            gone = next((e for e in entries if e["id"] == entry_id), None)
+            if gone is None:
+                return None
+            self._write("mine.json", {**store, "entries": [e for e in entries if e["id"] != entry_id]})
+            for name in gone["images"] + ([gone["audio"]] if gone["audio"] else []):
+                (self.root / "mine" / name).unlink(missing_ok=True)
+        return gone
+
+    def mine_file(self, name: str) -> bytes | None:
+        if not re.fullmatch(r"M[0-9a-f]{3,16}(-\d+)?\.(png|jpg|gif|webp|webm|ogg|m4a|mp4)", name):
+            return None
+        path = self.root / "mine" / name
+        return path.read_bytes() if path.exists() else None
+
     def frame_bytes(self, frame_id: str) -> bytes | None:
         for frame in self.frames:
             if frame["id"] == frame_id:

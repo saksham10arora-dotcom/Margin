@@ -11,9 +11,10 @@
 import { adapterFor, detectPlatform, findVideo } from './adapters.js';
 import { Panel } from './panel.js';
 import { isReserved, markBeside, planLayout, releaseSpace, removeLayoutStyle, reserveSpace } from './layout.js';
+import { headingInView, pageMeta, selectedText } from './mine.js';
 import { ModelOrder } from './models-ui.js';
 import { AudioRecorder, FrameSampler } from './sensors.js';
-import { coverage, engineName, mergeRanges, shouldAutoCompose, textBetween } from './util.js';
+import { coverage, engineName, formatTs, mergeRanges, shouldAutoCompose, textBetween } from './util.js';
 
 // Course platforms are captured the moment a lecture plays. YouTube and the
 // open web are opt-in per video: most of what people watch there is not a
@@ -22,7 +23,7 @@ const CAPTURE_BY_DEFAULT = { udemy: true, coursera: true, deeplearning: true, lo
 
 // The sidecar is long-running, so it can be older than a freshly reloaded
 // extension. Below this, features the extension relies on are missing.
-const MIN_SIDECAR = [2, 9, 0]; // the Crux, Quiz and Ask routes
+const MIN_SIDECAR = [2, 11, 0]; // your own notes (the Mine tab)
 
 function older(version, min) {
   const v = String(version || '0').split('.').map(Number);
@@ -31,6 +32,10 @@ function older(version, min) {
   }
   return false;
 }
+
+// Where a page with no video opens as a page you read, with only your own
+// notes (the Mine tab). The lecture sites always mean a lecture.
+const PAGE_PLATFORMS = new Set(['web', 'local']);
 
 const SPEECH_LABEL = {
   'udemy-captions': 'Udemy CC',
@@ -77,12 +82,24 @@ class MarginApp {
     this.cardsFor = null;
     this.capturing = false;
     this.audioInFlight = new Set();
+    this.note = null;
+    this.quote = null; // text you selected on the page, offered for your next note
   }
 
   async init({ byUser = false } = {}) {
     // Closing the tab hands the lecture over (see handOff).
     this.onPageHide = () => this.handOff();
     window.addEventListener('pagehide', this.onPageHide);
+    this.startedAt = Date.now();
+    // Text you select on the page becomes a quote in your next note.
+    this.onSelection = () => {
+      clearTimeout(this.selectionTimer);
+      this.selectionTimer = setTimeout(() => {
+        const picked = selectedText();
+        if (picked) { this.quote = picked; this.panel.setQuote(picked); }
+      }, 250);
+    };
+    document.addEventListener('selectionchange', this.onSelection);
     const settings = await this.bridge.storageGet({ marginAuto: true, marginCapture: {}, marginOpen: {} });
     this.auto = settings.marginAuto !== false;
     this.captureSettings = settings.marginCapture || {};
@@ -100,6 +117,9 @@ class MarginApp {
       onMakeCrux: () => this.makeCrux(),
       onMakeCards: () => this.makeCards(),
       onExportCards: () => this.exportCards(),
+      onMineStart: () => this.mineContext(),
+      onMineAdd: (payload) => this.addMine(payload),
+      onMineDelete: (id) => this.deleteMine(id),
       onClose: () => this.destroy({ byUser: true }),
       onLayout: (expanded) => {
         this.layout(expanded);
@@ -169,8 +189,15 @@ class MarginApp {
       return;
     }
     const video = findVideo();
+    if (video && this.pageMode) this.leavePage(); // a video turned up: a lecture after all
     if (video &&(video !== this.video || key !== this.lectureKey) && this.health) {
       this.switchTo(video, key);
+      return;
+    }
+    // No video on an ordinary page (notes, an article): a page you read, for your own notes.
+    if (!video && !this.video && this.health && PAGE_PLATFORMS.has(this.platform) && key !== this.pageKey
+        && Date.now() - this.startedAt > 1500) {
+      this.enterPage(key);
       return;
     }
     if (this.video && this.session) this.track();
@@ -260,6 +287,7 @@ class MarginApp {
       this.bridge.send({ type: 'blob', path: `/session/${this.session}/frame/${f.id}` })
         .then((r) => r?.ok && this.panel.addCard({ id: f.id, t: f.t, img: r.dataUrl }));
     }
+    this.loadMine();
     const note = await this.api('GET', `/session/${this.session}/note`);
     this.composed = note.ok;
     if (note.ok) {
@@ -866,11 +894,111 @@ class MarginApp {
     if (view === 'quiz') this.loadCards();
   }
 
+  // --- mine: your own notes, and pages you read ------------------------------------------
+
+  /** A page that is not a lecture: Margin opens on your notes for it. Nothing is stored until you write one. */
+  async enterPage(key) {
+    const token = (this.switchToken = (this.switchToken || 0) + 1);
+    if (this.capturing) this.stopCapture();
+    this.reset();
+    this.pageMode = true;
+    this.pageKey = key;
+    this.lectureKey = null;
+    this.meta = pageMeta();
+    this.panel.setLecture(this.meta);
+    this.panel.setMode('page');
+    this.refreshControls();
+    const res = await this.api('POST', '/session/lookup', this.meta);
+    if (token !== this.switchToken || !res.ok || !res.data.exists) return;
+    this.session = res.data.summary.key;
+    await Promise.all([this.loadMine(), this.loadPageNote()]);
+  }
+
+  leavePage() {
+    this.pageMode = false;
+    this.pageKey = null;
+    this.panel.setMode('lecture');
+  }
+
+  async loadPageNote() {
+    const res = this.session ? await this.api('GET', `/session/${this.session}/note`) : null;
+    this.note = res?.ok ? res.data : null;
+    this.refreshControls();
+  }
+
+  /** Where a note you begin now belongs: the moment of the lecture, or the part of the page. */
+  mineContext() {
+    if (!this.pageMode && this.video) {
+      const t = this.video.currentTime;
+      return { t, label: `At ${formatTs(t)} in the lecture` };
+    }
+    const where = this.quote?.where || headingInView();
+    return { where, label: where ? `Under “${where}”` : 'On this page' };
+  }
+
+  async loadMine() {
+    const session = this.session;
+    if (!session) return;
+    const res = await this.api('GET', `/session/${session}/mine`);
+    if (!res.ok || session !== this.session) return;
+    this.panel.showMine(res.data.entries,
+      (name) => this.bridge.send({ type: 'blob', path: `/session/${session}/mine/file/${encodeURIComponent(name)}` }));
+  }
+
+  /** Keep a note of yours. Resolves true once it is saved. */
+  async addMine(payload) {
+    if (!this.meta) {
+      this.panel.toast('Margin is still reading this page. Try again in a second.');
+      return false;
+    }
+    if (!this.session) {
+      // The first moment anything about this page (or video) is stored: you wrote something on it.
+      const res = await this.api('POST', '/session', this.meta);
+      if (!res.ok) {
+        this.panel.toast('Could not save it: is the sidecar running?', 6000);
+        await this.checkHealth();
+        return false;
+      }
+      this.session = res.data.key;
+    }
+    const res = await this.api('POST', `/session/${this.session}/mine`, payload);
+    if (!res.ok) {
+      this.panel.toast(res.data?.detail ? `Not saved: ${res.data.detail}` : 'Not saved: is the sidecar running?', 6000);
+      return false;
+    }
+    this.quote = null;
+    await this.loadMine();
+    if (this.pageMode) {
+      await this.loadPageNote();
+      this.panel.toast(`Saved to ${res.data.note}`);
+    } else if (res.data.in_note) {
+      this.panel.toast('Added to the note, under My notes.');
+      if (this.composed) this.loadNote();
+    } else {
+      this.panel.toast('Saved. It goes into this lecture\'s note when Margin writes it.', 5000);
+    }
+    return true;
+  }
+
+  async deleteMine(id) {
+    if (!this.session) return;
+    const res = await this.api('DELETE', `/session/${this.session}/mine/${encodeURIComponent(id)}`);
+    if (!res.ok) { this.panel.toast('Could not delete it: is the sidecar running?'); return; }
+    await this.loadMine();
+    if (this.pageMode) await this.loadPageNote();
+    else if (this.composed) this.loadNote();
+  }
+
   // --- controls -------------------------------------------------------------------
 
   refreshControls() {
     const p = this.panel;
     if (!this.health) return;
+    if (this.pageMode) {
+      if (this.note?.obsidian_uri) p.setPrimary('open-note', 'Open in Obsidian', { quiet: true });
+      else p.setPrimary('none', 'Your notes go to Reading in your vault', { quiet: true, disabled: true });
+      return;
+    }
     const busy = ['queued', 'composing', 'running'].includes(this.status?.state);
     if (busy) p.setPrimary('none', 'Writing notes…', { disabled: true });
     else if (this.composed && this.stale) {
@@ -886,7 +1014,9 @@ class MarginApp {
   }
 
   async onPrimary(action) {
-    if (action === 'retry') {
+    if (action === 'open-note' && this.note?.obsidian_uri) {
+      window.open(this.note.obsidian_uri, '_blank');
+    } else if (action === 'retry') {
       if (await this.checkHealth()) this.reopen();
     } else if (action === 'capture') {
       if (!this.session && this.meta) {
@@ -1015,6 +1145,8 @@ class MarginApp {
   }
 
   destroy({ byUser = false } = {}) {
+    document.removeEventListener('selectionchange', this.onSelection);
+    this.panel.mine?.memo?.cancel(); // a voice note being recorded: the microphone is let go
     this.handOff();
     this.leave('closing');
     window.removeEventListener('pagehide', this.onPageHide);

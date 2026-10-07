@@ -1,8 +1,10 @@
 // The side panel: a view onto what Margin is sensing, and what it wrote.
 //
-// Four tabs, one per stage of a lecture's life:
+// Tabs, one per stage of a lecture's life:
 //   Live    slides captured so far, each with the words spoken over it
 //   Notes   the composed note, rendered the way Obsidian renders it
+//   Mine    your own notes: typed, pasted or spoken, stamped with the moment
+//           (on a page that is not a lecture, this is the only tab)
 //   Code    this lecture's notebook section, with its real outputs
 //   Course  every lecture of the course and whether it has notes yet
 //
@@ -12,6 +14,7 @@
 
 import { decodeEntities, escapeHtml, highlightPython, renderMarkdown } from './render.js';
 import { Quiz } from './quiz.js';
+import { VoiceMemo } from './mine.js';
 import { formatTs, noteProvenance } from './util.js';
 
 const ICON = {
@@ -31,6 +34,10 @@ const ICON = {
   redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
   code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>',
   ask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
 };
 
@@ -95,6 +102,7 @@ export class Panel {
         <nav class="tabs" role="tablist">
           <button class="tab" role="tab" data-view="live" aria-selected="true">Live<span class="count" id="count-live"></span></button>
           <button class="tab" role="tab" data-view="note" aria-selected="false">Notes</button>
+          <button class="tab" role="tab" data-view="mine" aria-selected="false">Mine<span class="count" id="count-mine"></span></button>
           <button class="tab" role="tab" data-view="crux" aria-selected="false">Crux</button>
           <button class="tab" role="tab" data-view="quiz" aria-selected="false">Quiz</button>
           <button class="tab" role="tab" data-view="code" aria-selected="false">Code</button>
@@ -112,6 +120,27 @@ export class Panel {
             <div class="now" id="now" hidden><b id="now-t"></b><span id="now-text"></span></div>
           </section>
           <section class="view" data-view="note" hidden><div id="note-area"></div></section>
+          <section class="view" data-view="mine" hidden>
+            <form class="composer" id="mine-form">
+              <div class="mine-quote-chip" id="mine-quote" hidden>
+                <span id="mine-quote-text"></span>
+                <button type="button" class="chip-x" id="mine-quote-x" aria-label="Leave the selected text out">${ICON.close}</button>
+              </div>
+              <textarea id="mine-text" rows="3" spellcheck="true"
+                placeholder="Your own note. Paste a screenshot, drop a picture, or record your voice."></textarea>
+              <div class="mine-attach" id="mine-attach" hidden></div>
+              <div class="composer-row">
+                <button type="button" class="icon-btn" id="mine-pick" aria-label="Add a picture" title="Add a picture">${ICON.image}</button>
+                <button type="button" class="icon-btn mic" id="mine-voice" aria-pressed="false" aria-label="Record a voice note" title="Record a voice note">${ICON.mic}</button>
+                <span class="mine-at" id="mine-at"></span>
+                <button type="submit" class="primary mine-add" id="mine-add">Add</button>
+              </div>
+              <input type="file" id="mine-file" accept="image/*" multiple hidden>
+            </form>
+            <div class="empty" id="mine-empty"><strong>Your own notes go here.</strong>Each one is stamped with the moment
+              you wrote it and goes into the note in your vault, in its own section that Margin never rewrites.</div>
+            <div class="mine-list" id="mine-list"></div>
+          </section>
           <section class="view" data-view="crux" hidden>
             <div id="crux-area"></div>
             <form class="ask" id="ask" hidden>
@@ -199,11 +228,20 @@ export class Panel {
       this.h.onAsk?.(q);
     });
     this.$('quiz-area').addEventListener('keydown', (e) => this.quizKey(e));
+    this.wireComposer();
     this.$('body').addEventListener('click', (e) => {
       const act = e.target.closest('[data-study]')?.dataset.study;
       if (act) {
         e.preventDefault();
         this.studyAction(act, e.target.closest('[data-study]'));
+        return;
+      }
+      const del = e.target.closest('[data-mine-del]');
+      if (del) {
+        e.preventDefault();
+        // Twice to delete: the first click asks.
+        if (del.dataset.armed === 'true') this.h.onMineDelete?.(del.dataset.mineDel);
+        else { del.dataset.armed = 'true'; del.title = 'Click again to delete'; setTimeout(() => { del.dataset.armed = 'false'; }, 3000); }
         return;
       }
       const seek = e.target.closest('[data-seek]');
@@ -268,7 +306,8 @@ export class Panel {
     this.platform = meta.platform;
     const crumbs = [meta.course_title, meta.section_title && (meta.section_index ? `§${meta.section_index} ${meta.section_title}` : meta.section_title)]
       .filter(Boolean).join('  ·  ');
-    this.$('crumbs').textContent = crumbs || platformName(meta.platform);
+    this.$('crumbs').textContent = crumbs
+      || (meta.platform === 'page' ? `Reading · ${meta.author || ''}` : platformName(meta.platform));
     const n = Number.isInteger(meta.lecture_index) ? `${meta.lecture_index} · ` : '';
     this.$('title').textContent = `${n}${meta.lecture_title || 'Untitled lecture'}`;
     this.cards.clear();
@@ -282,6 +321,11 @@ export class Panel {
     this.$('ask').hidden = true;
     this.$('quiz-area').innerHTML = '';
     this.quiz = null;
+    this.$('mine-list').innerHTML = '';
+    this.$('count-mine').textContent = '';
+    this.$('mine-empty').hidden = false;
+    this.mineSeen = null; // a new lecture's notes appear at once, without fading in
+    if (this.mine) { this.mine.ctx = null; this.$('mine-at').textContent = ''; }
     this.scrolls = {}; // a new lecture starts every tab at the top
     this.setSlides(0);
     this.setWatched(0);
@@ -553,7 +597,7 @@ export class Panel {
   }
 
   async loadImages(scope) {
-    const imgs = [...scope.querySelectorAll('img[data-vault-path]')];
+    const imgs = [...scope.querySelectorAll('img[data-vault-path], audio[data-vault-path]')];
     await Promise.all(imgs.map(async (img) => {
       const path = img.dataset.vaultPath;
       if (!this.imageCache.has(path)) {
@@ -652,6 +696,194 @@ export class Panel {
     }
   }
 
+  // --- mine: your own notes -------------------------------------------------------------
+
+  /** 'lecture', or 'page': a page that is not a lecture, where your notes are all there is. */
+  setMode(mode) {
+    this.mode = mode;
+    this.panel.dataset.mode = mode;
+    if (mode === 'page') this.show('mine');
+    else if (this.view === 'mine' && !this.mineTouched) this.show('live');
+  }
+
+  wireComposer() {
+    this.mine = { images: [], audio: null, ctx: null, quote: null, memo: null };
+    const text = this.$('mine-text');
+    text.addEventListener('input', () => this.mineStart());
+    text.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.mineSubmit(); }
+    });
+    text.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/')).map((i) => i.getAsFile());
+      if (!files.length) return;
+      e.preventDefault();
+      this.mineAddPictures(files);
+    });
+    const form = this.$('mine-form');
+    form.addEventListener('dragover', (e) => { e.preventDefault(); form.dataset.drop = 'true'; });
+    form.addEventListener('dragleave', () => { form.dataset.drop = 'false'; });
+    form.addEventListener('drop', (e) => {
+      e.preventDefault();
+      form.dataset.drop = 'false';
+      this.mineAddPictures([...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/')));
+    });
+    form.addEventListener('submit', (e) => { e.preventDefault(); this.mineSubmit(); });
+    this.$('mine-pick').addEventListener('click', () => this.$('mine-file').click());
+    this.$('mine-file').addEventListener('change', (e) => {
+      this.mineAddPictures([...e.target.files]);
+      e.target.value = '';
+    });
+    this.$('mine-voice').addEventListener('click', () => this.mineVoice());
+    this.$('mine-quote-x').addEventListener('click', () => this.setQuote(null));
+    this.$('mine-attach').addEventListener('click', (e) => {
+      const drop = e.target.closest('[data-drop]');
+      if (!drop) return;
+      if (drop.dataset.drop === 'audio') this.mine.audio = null;
+      else this.mine.images.splice(Number(drop.dataset.drop), 1);
+      this.drawAttachments();
+    });
+  }
+
+  /** The moment (or part of the page) a note belongs to: where you were when you began it. */
+  mineStart() {
+    this.mineTouched = true;
+    if (this.mine.ctx) return;
+    this.mine.ctx = this.h.onMineStart?.() || {};
+    this.$('mine-at').textContent = this.mine.ctx.label || '';
+  }
+
+  /** Text you selected on the page, offered as a quote for your next note. */
+  setQuote(quote) {
+    this.mine.quote = quote;
+    this.$('mine-quote').hidden = !quote;
+    this.$('mine-quote-text').textContent = quote ? `“${quote.text}”` : '';
+  }
+
+  async mineAddPictures(files) {
+    if (!files.length) return;
+    this.mineStart();
+    for (const file of files.slice(0, 8 - this.mine.images.length)) {
+      if (file.size > 12e6) { this.toast('That picture is over 12 MB. Try a smaller screenshot.'); continue; }
+      this.mine.images.push(await readAsDataUrl(file));
+    }
+    this.drawAttachments();
+    this.$('mine-text').focus();
+  }
+
+  drawAttachments() {
+    const box = this.$('mine-attach');
+    const pics = this.mine.images.map((src, i) => `<span class="attach-pic"><img src="${escapeHtml(src)}" alt="Picture ${i + 1}">`
+      + `<button type="button" class="chip-x" data-drop="${i}" aria-label="Remove this picture">${ICON.close}</button></span>`);
+    const voice = this.mine.audio ? [`<span class="attach-voice">${ICON.mic}Voice note ${formatTs(this.mine.audio.seconds)}`
+      + `<button type="button" class="chip-x" data-drop="audio" aria-label="Remove the voice note">${ICON.close}</button></span>`] : [];
+    box.innerHTML = [...pics, ...voice].join('');
+    box.hidden = !pics.length && !voice.length;
+  }
+
+  async mineVoice() {
+    const button = this.$('mine-voice');
+    if (this.mine.memo) {
+      const memo = this.mine.memo;
+      this.mine.memo = null;
+      clearInterval(this.recTimer);
+      button.setAttribute('aria-pressed', 'false');
+      button.innerHTML = ICON.mic;
+      this.$('mine-at').textContent = this.mine.ctx?.label || '';
+      this.mine.audio = await memo.stop();
+      // Said and done: with nothing else in it, the note is kept at once.
+      if (!this.$('mine-text').value.trim() && !this.mine.images.length) this.mineSubmit();
+      else this.drawAttachments();
+      return;
+    }
+    if (!VoiceMemo.supported()) { this.toast('This browser cannot record here.'); return; }
+    this.mineStart();
+    const memo = new VoiceMemo();
+    try {
+      await memo.start();
+    } catch (e) {
+      this.toast(e?.name === 'NotAllowedError'
+        ? 'Margin needs the microphone on this site: allow it from the icon in the address bar, then try again.'
+        : `Could not start recording: ${e?.message || e}`, 7000);
+      return;
+    }
+    this.mine.memo = memo;
+    button.setAttribute('aria-pressed', 'true');
+    button.innerHTML = ICON.stop;
+    const at = this.$('mine-at');
+    const show = () => {
+      at.textContent = `Recording ${formatTs(memo.seconds)} · click to stop`;
+      if (memo.seconds >= 600) this.mineVoice(); // ten minutes is a lecture, not a note
+    };
+    show();
+    this.recTimer = setInterval(show, 500);
+  }
+
+  async mineSubmit() {
+    if (this.mineSending) return;
+    const m = this.mine;
+    const text = this.$('mine-text').value.trim();
+    if (!text && !m.images.length && !m.audio && !m.quote) {
+      this.$('mine-text').focus();
+      return;
+    }
+    // Everything travels in one message to the sidecar, which Chrome caps at 64 MB.
+    const size = m.images.reduce((n, s) => n + s.length, 0) + (m.audio?.blob.size || 0) * 1.4;
+    if (size > 45e6) {
+      this.toast('That is too much for one note: add fewer pictures at a time.', 6000);
+      return;
+    }
+    const payload = {
+      text,
+      quote: m.quote?.text || null,
+      where: m.ctx?.where || m.quote?.where || null,
+      t: Number.isFinite(m.ctx?.t) ? m.ctx.t : null,
+      images: m.images,
+      ...(m.audio ? { audio: await readAsDataUrl(m.audio.blob), audio_mime: m.audio.blob.type || 'audio/webm' } : {}),
+    };
+    this.mineSending = true;
+    this.$('mine-add').disabled = true;
+    this.$('mine-add').textContent = m.audio ? 'Writing it down…' : 'Adding…';
+    const ok = await this.h.onMineAdd?.(payload);
+    this.mineSending = false;
+    this.$('mine-add').disabled = false;
+    this.$('mine-add').textContent = 'Add';
+    if (!ok) return; // kept in the box, to try again
+    this.$('mine-text').value = '';
+    this.mine.images = [];
+    this.mine.audio = null;
+    this.mine.ctx = null;
+    this.$('mine-at').textContent = '';
+    this.setQuote(null);
+    this.drawAttachments();
+  }
+
+  /** Your notes, newest first. `fileUrl(name)` loads a picture or recording. */
+  showMine(entries, fileUrl) {
+    this.$('count-mine').textContent = entries.length ? String(entries.length) : '';
+    this.$('mine-empty').hidden = entries.length > 0;
+    const list = this.$('mine-list');
+    const seen = this.mineSeen || new Set();
+    list.innerHTML = [...entries].reverse().map((e) => {
+      const when = Number.isFinite(e.t) ? `<button class="mine-time" data-seek="${Math.floor(e.t)}">${formatTs(e.t)}</button>`
+        : e.where ? `<span class="mine-where">${escapeHtml(e.where)}</span>` : '<span></span>';
+      // Fades in once, when it is new: not again each time the list is drawn.
+      return `<article class="mine-item${this.mineSeen && !seen.has(e.id) ? ' entering' : ''}" data-mine="${escapeHtml(e.id)}">
+        <div class="mine-head">${when}<button class="icon-btn mine-del" data-mine-del="${escapeHtml(e.id)}"
+          aria-label="Delete this note" title="Delete">${ICON.trash}</button></div>
+        ${e.quote ? `<blockquote class="mine-quote">${escapeHtml(e.quote)}</blockquote>` : ''}
+        ${e.text ? `<div class="mine-text">${escapeHtml(e.text)}</div>` : ''}
+        ${(e.images || []).map((n) => `<img class="mine-img" data-mine-file="${escapeHtml(n)}" alt="Your picture">`).join('')}
+        ${e.audio ? `<audio controls preload="none" data-mine-file="${escapeHtml(e.audio)}"></audio>` : ''}
+        ${e.transcript ? `<p class="mine-said">${escapeHtml(e.transcript)}</p>` : ''}
+      </article>`;
+    }).join('');
+    this.mineSeen = new Set(entries.map((e) => e.id));
+    list.querySelectorAll('[data-mine-file]').forEach(async (el) => {
+      const res = await fileUrl(el.dataset.mineFile);
+      if (res?.ok) el.src = res.dataUrl;
+    });
+  }
+
   // --- course -----------------------------------------------------------------------
 
   /**
@@ -709,7 +941,8 @@ export class Panel {
 }
 
 function platformName(p) {
-  return { youtube: 'YouTube', udemy: 'Udemy', coursera: 'Coursera', deeplearning: 'DeepLearning.AI', local: 'Local video' }[p]
+  return { youtube: 'YouTube', udemy: 'Udemy', coursera: 'Coursera', deeplearning: 'DeepLearning.AI', local: 'Local video',
+    page: 'Reading' }[p]
     || 'Web video';
 }
 
@@ -737,4 +970,13 @@ function installKatexFonts(katexCss, fontBase) {
   style.id = 'margin-katex-fonts';
   style.textContent = faces.map((f) => f.replace(/url\(fonts\//g, `url(${fontBase}`)).join('\n');
   document.head.appendChild(style);
+}
+
+function readAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }

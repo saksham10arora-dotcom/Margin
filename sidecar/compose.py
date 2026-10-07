@@ -471,7 +471,8 @@ def compose(session: Session, previous_gist: str | None = None, progress=None,
 # was free, replaced a 3,400-word note with a 1,400-word one).
 
 # The practice sections at the end of every note: an update adds items to them.
-END_SECTIONS = ("Worked example", "Setup and resources", "In code", "Watch out", "Check yourself", "Key terms")
+END_SECTIONS = ("Worked example", "Setup and resources", "In code", "Watch out", "Check yourself", "Key terms",
+                "My notes")
 _SECTION = re.compile(r"^## (.+)$", re.MULTILINE)
 _HEADING_TIME = re.compile(r"\[(\d+):(\d\d)(?::(\d\d))?\]")
 
@@ -593,8 +594,8 @@ def merge_update(note: str, additions: str, protect: bool = False, same_topic_se
     for heading, body in new:
         name = _end_name(heading)
         if name is not None:
-            if name == "In code":
-                continue  # written from the notebook, not by an update
+            if name in ("In code", "My notes"):
+                continue  # written from the notebook, and by you: never by an update
             at = next((i for i, s in enumerate(ends) if _end_name(s[0]) == name), None)
             if at is None:
                 ends.append((heading, body))
@@ -629,6 +630,12 @@ def _without_frontmatter(note: str) -> str:
     return re.sub(r"\A---\n.*?\n---\n", "", note, count=1, flags=re.DOTALL).strip()
 
 
+def _without_my_notes(note: str) -> str:
+    """The note without your own section: it is yours, not the lecture's, and
+    an update is not to write in it."""
+    return re.sub(r"^## My notes[ \t]*\n.*?(?=^## |\Z)", "", note, flags=re.MULTILINE | re.DOTALL)
+
+
 def build_update_prompt(meta: dict, note: str, transcript: str, transcript_source: str | None,
                         ranges: list[list[float]], slides: list[dict]) -> str:
     lecture = meta.get("lecture_title") or "Untitled lecture"
@@ -653,7 +660,7 @@ university student who learns best from intuition first, pictures second, formul
 
 You already wrote the notes for this lecture. Here they are, as they stand now:
 <<<THE NOTE SO FAR
-{_without_frontmatter(note)}
+{_without_frontmatter(_without_my_notes(note))}
 THE NOTE SO FAR>>>
 
 Since then the student watched more of the lecture: {parts}. Below is what was said in exactly

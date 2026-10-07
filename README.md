@@ -51,6 +51,14 @@ the note (with the lecture's own diagram next to one it drew), its crux, flashca
 - **Ask the lecture.** Type a question and get the answer from what was actually
   said, with the moment linked: click it and the video jumps there. Something the
   lecture never covered is said to be so.
+- **Your own notes, beside Margin's.** The Mine tab keeps what you type, paste (a
+  screenshot), drop or say (a voice note, written down by Whisper on your Mac), each
+  stamped with its moment in the lecture. They go into the note's own "My notes"
+  section, which Margin's updates and rewrites never touch.
+- **Notes on anything you read.** On a page that is not a lecture (an article, your
+  college's notes site), the toolbar button opens Margin just for your notes: select a
+  sentence to quote it, and each note is saved with the section you were reading, in
+  one note per page under Reading in your vault.
 - **Quiz yourself.** The note becomes flashcards you flip in the panel: say whether
   you knew it, and the ones you missed come back until you know them all. Export
   them to [Anki](https://apps.ankiweb.net) in one click when you want spaced repetition.

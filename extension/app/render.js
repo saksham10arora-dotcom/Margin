@@ -24,6 +24,7 @@ marked.setOptions({ breaks: false, gfm: true });
 
 const MATH_BLOCK = /\$\$[\s\S]+?\$\$|\$[^\n$]+?\$/g;
 const SAFE_URL = /^(https?:|#|\/)/i;
+const AUDIO = /\.(webm|ogg|m4a|mp3|wav|mp4)$/i; // a voice note, embedded the way Obsidian plays it
 
 const escapeTags = (text) => text.replace(/</g, '&lt;');
 const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -61,7 +62,8 @@ function renderCallouts(html) {
  * the note when the path starts with a folder in the same directory).
  */
 export function renderMarkdown(markdown, { folder = '' } = {}) {
-  let src = stripFrontmatter(markdown);
+  // Obsidian comments (`%% ... %%`, like the marker on each note of yours) are not shown.
+  let src = stripFrontmatter(markdown).replace(/%%[\s\S]*?%%\n?/g, '');
 
   // 1. Obsidian embeds -> a placeholder token that survives escaping.
   const embeds = [];
@@ -89,6 +91,9 @@ export function renderMarkdown(markdown, { folder = '' } = {}) {
   html = html.replace(/(?:<p>)?\u0000EMBED(\d+)\u0000(?:<\/p>)?/g, (_m, i) => {
     const e = embeds[Number(i)];
     const full = folder ? `${folder}/${e.path}` : e.path;
+    if (AUDIO.test(e.path)) {
+      return `<figure class="embed audio"><audio controls preload="none" data-vault-path="${escapeHtml(full)}"></audio></figure>`;
+    }
     return `<figure class="embed"><img data-vault-path="${escapeHtml(full)}" alt=""`
       + `${e.width ? ` style="max-width:${Math.min(e.width, 2000)}px"` : ''}></figure>`;
   });

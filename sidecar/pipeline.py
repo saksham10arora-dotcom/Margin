@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 from sidecar import compose as C
-from sidecar import library
+from sidecar import library, mine
 from sidecar import notebook as NB
 from sidecar import study
 from sidecar.config import AUTOLINK, MAX_AUTOLINKS_PER_SECTION
@@ -49,6 +49,73 @@ HISTORY_DIR = ".margin-history"  # hidden from Obsidian's file list
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+_note_locks: dict[str, threading.Lock] = {}
+_note_locks_guard = threading.Lock()
+
+
+def _note_lock(path: Path) -> threading.Lock:
+    """One writer at a time per note: a note of yours added while Margin is
+    writing must not be lost to Margin's write, nor Margin's to yours."""
+    with _note_locks_guard:
+        return _note_locks.setdefault(str(path), threading.Lock())
+
+
+def _with_mine(session: Session, vault: Path, note: str) -> str:
+    """The note with every note of yours in it, their pictures and voice
+    copied into the assets folder beside the slides."""
+    entries = session.mine
+    if not entries:
+        return note
+    meta = session.meta
+    assets = library.assets_dir(vault, meta)
+    prefix = library.asset_prefix(meta)
+    have = mine.ids_in(note)
+    blocks = []
+    for entry in entries:
+        if entry["id"] in have:
+            continue
+        for name in entry["images"] + ([entry["audio"]] if entry["audio"] else []):
+            target = assets / f"{prefix}-{name}"
+            data = None if target.exists() else session.mine_file(name)
+            if data is not None:
+                assets.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        blocks.append(mine.render(entry, prefix, meta))
+    return mine.insert(note, blocks)
+
+
+def _yours_kept(session: Session, vault: Path, note_path: Path, note: str) -> str:
+    """What Margin is about to write, with your notes as they are in the vault
+    right now (edits and all), and any not in it yet. Call under the note's lock."""
+    if note_path.exists():
+        note = mine.carry(note_path.read_text(), note)
+    return _with_mine(session, vault, note)
+
+
+def write_mine(session: Session, vault: Path, remove: str | None = None) -> Path | None:
+    """Put your notes into the note now, taking out `remove` (deleted in the
+    panel). A page you read gets its note with your first one; a lecture's
+    note is Margin's to start, and takes yours in when it is written."""
+    meta = session.meta
+    path = library.lecture_note_path(vault, meta)
+    with _note_lock(path):
+        existed = path.exists()
+        if existed:
+            note = path.read_text()
+            own = not note_edited(session, vault)
+        elif meta.get("platform") == "page" and session.mine:
+            note, own = mine.page_note(meta), True
+        else:
+            return None
+        new = _with_mine(session, vault, mine.remove(note, remove) if remove else note)
+        if new != note or not existed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(new)
+            if own:
+                session.record_written(_digest(new))
+    return path
 
 
 def note_edited(session: Session, vault: Path) -> bool:
@@ -230,13 +297,14 @@ def _relink_neighbours(vault: Path, meta: dict) -> None:
         owner = owners.get(path)
         if owner is not None and note_edited(owner, vault):
             continue
-        text = path.read_text()
-        updated = C.replace_nav(text, C.nav_line(vault, {**meta, "lecture_index": fm["lecture"]}))
-        if updated is None or updated == text:
-            continue
-        path.write_text(updated)
-        if owner is not None:
-            owner.record_written(_digest(updated))
+        with _note_lock(path):
+            text = path.read_text()
+            updated = C.replace_nav(text, C.nav_line(vault, {**meta, "lecture_index": fm["lecture"]}))
+            if updated is None or updated == text:
+                continue
+            path.write_text(updated)
+            if owner is not None:
+                owner.record_written(_digest(updated))
 
 
 def _with_edits_notice(note: str, kept: str) -> str:
@@ -446,26 +514,28 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
         session.save_study("crux", {"crux": crux, "engine": comp.engine})
 
     note_path.parent.mkdir(parents=True, exist_ok=True)
-    if guard is not None and _note_words(note) < KEEP_UNLESS * _note_words(guard):
-        # Margin's own rewrite came out thinner than the note you have: keep
-        # yours, and from now on add what is new to it.
-        logger.warning("Rewrite of %s came out thinner (%s vs %s words): kept the note",
-                       session.key, _note_words(note), _note_words(guard))
+    with _note_lock(note_path):
+        note = _yours_kept(session, vault, note_path, note)
+        if guard is not None and _note_words(note) < KEEP_UNLESS * _note_words(guard):
+            # Margin's own rewrite came out thinner than the note you have: keep
+            # yours, and from now on add what is new to it.
+            logger.warning("Rewrite of %s came out thinner (%s vs %s words): kept the note",
+                           session.key, _note_words(note), _note_words(guard))
+            session.mark_composed(rev, *covers)
+            session.set_status("done", "Notes ready (kept your note: the rewrite came out thinner)",
+                               result={"note_path": str(note_path), "filename": note_path.relative_to(vault).as_posix(),
+                                       "obsidian_uri": library.obsidian_uri(note_path), "engine": comp.engine,
+                                       "kept": True},
+                               resumed=False)
+            return session.status["result"]
+        kept = _keep_your_edits(session, vault, note_path)
+        if kept:
+            note = _with_edits_notice(note, kept)
+        elif explicit and note_path.exists():
+            _keep_previous(note_path)
+        note_path.write_text(note)
+        session.record_written(_digest(note))
         session.mark_composed(rev, *covers)
-        session.set_status("done", "Notes ready (kept your note: the rewrite came out thinner)",
-                           result={"note_path": str(note_path), "filename": note_path.relative_to(vault).as_posix(),
-                                   "obsidian_uri": library.obsidian_uri(note_path), "engine": comp.engine,
-                                   "kept": True},
-                           resumed=False)
-        return session.status["result"]
-    kept = _keep_your_edits(session, vault, note_path)
-    if kept:
-        note = _with_edits_notice(note, kept)
-    elif explicit and note_path.exists():
-        _keep_previous(note_path)
-    note_path.write_text(note)
-    session.record_written(_digest(note))
-    session.mark_composed(rev, *covers)
     _relink_neighbours(vault, meta)
     if is_lite(comp.engine) and not (choice and comp.engine_chosen):
         # A fallback, not your pick: a full model rewrites it later. A model you
@@ -529,13 +599,15 @@ def run_update(session: Session, vault: Path, quality: str = "any", choice: dict
     note = C.merge_update(old, additions, protect=edited) if additions.strip() else old
     note = C.set_frontmatter(note, {"coverage": round(session.coverage(), 2),
                                     "slides_captured": len(session.frames)})
-    note_path.write_text(note)
-    if not edited:
-        session.record_written(_digest(note))  # still Margin's own: later updates may improve its sections
+    with _note_lock(note_path):
+        note = _yours_kept(session, vault, note_path, note)
+        note_path.write_text(note)
+        if not edited:
+            session.record_written(_digest(note))  # still Margin's own: later updates may improve its sections
     session.mark_composed(rev, *covers)
     if C.new_topics(old, note):
         session.set_status("composing", "Updating the crux with the new topics")
-        _refresh_crux(session, note_path, note, edited)
+        _refresh_crux(session, vault, note_path, note, edited)
     if meta.get("course_title"):
         write_course_index(vault, meta)
     done = {**done, "engine": comp.engine, "slides_embedded": slide_files, "added": what}
@@ -544,7 +616,7 @@ def run_update(session: Session, vault: Path, quality: str = "any", choice: dict
     return done
 
 
-def _refresh_crux(session: Session, note_path: Path, note: str, edited: bool) -> None:
+def _refresh_crux(session: Session, vault: Path, note_path: Path, note: str, edited: bool) -> None:
     """New topics can change what matters most in a lecture, so the crux is
     written again from the whole note: into the note, or only into the panel
     for a note you edited. A busy model leaves the crux it had."""
@@ -556,9 +628,10 @@ def _refresh_crux(session: Session, note_path: Path, note: str, edited: bool) ->
     crux = C.link_timestamps(crux, session.meta)
     session.save_study("crux", {"crux": crux, "engine": engine})
     if not edited:
-        note = study.with_crux(note, crux)
-        note_path.write_text(note)
-        session.record_written(_digest(note))
+        with _note_lock(note_path):
+            note = _yours_kept(session, vault, note_path, study.with_crux(note, crux))
+            note_path.write_text(note)
+            session.record_written(_digest(note))
 
 
 # --- course index --------------------------------------------------------------
