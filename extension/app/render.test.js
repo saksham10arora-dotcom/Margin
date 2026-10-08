@@ -97,7 +97,7 @@ describe('your own notes in the note', () => {
 
   it('plays a voice note instead of showing a broken picture', () => {
     const html = renderMarkdown(MINE, { folder: 'Quant' });
-    expect(html).toContain('<audio controls preload="none" data-vault-path="Quant/assets/28-M001.webm">');
+    expect(html).toContain('<audio controls preload="metadata" data-vault-path="Quant/assets/28-M001.webm">');
     expect(html).not.toContain('<img data-vault-path="Quant/assets/28-M001.webm"');
   });
 });

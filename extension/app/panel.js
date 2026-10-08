@@ -873,7 +873,7 @@ export class Panel {
         ${e.quote ? `<blockquote class="mine-quote">${escapeHtml(e.quote)}</blockquote>` : ''}
         ${e.text ? `<div class="mine-text">${escapeHtml(e.text)}</div>` : ''}
         ${(e.images || []).map((n) => `<img class="mine-img" data-mine-file="${escapeHtml(n)}" alt="Your picture">`).join('')}
-        ${e.audio ? `<audio controls preload="none" data-mine-file="${escapeHtml(e.audio)}"></audio>` : ''}
+        ${e.audio ? `<audio controls preload="metadata" data-mine-file="${escapeHtml(e.audio)}"></audio>` : ''}
         ${e.transcript ? `<p class="mine-said">${escapeHtml(e.transcript)}</p>` : ''}
       </article>`;
     }).join('');

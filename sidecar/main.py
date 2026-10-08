@@ -32,6 +32,9 @@ import binascii
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -104,7 +107,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.11.1"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux; 2.11: your own notes (Mine tab, voice, pictures, pages you read); 2.11.1: filmed notebooks fold
+VERSION = "2.11.2"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux; 2.11: your own notes (Mine tab, voice, pictures, pages you read); 2.11.1: filmed notebooks fold; 2.11.2: a voice note shows its length
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -398,6 +401,20 @@ def _picture_kind(raw: bytes) -> str:
     return kind
 
 
+def _with_length(raw: bytes, ext: str) -> bytes:
+    """A browser's recording carries no length in its header, so a player
+    (the panel's, Obsidian's) shows 0:00 until it has played it through.
+    Copied into a fresh file, without re-encoding, it says how long it is."""
+    if not shutil.which("ffmpeg"):
+        return raw
+    with tempfile.TemporaryDirectory(prefix="margin-voice-") as tmp:
+        src, out = Path(tmp) / f"in.{ext}", Path(tmp) / f"out.{ext}"
+        src.write_bytes(raw)
+        done = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-c", "copy", str(out)],
+                              capture_output=True, timeout=120)
+        return out.read_bytes() if done.returncode == 0 and out.exists() and out.stat().st_size else raw
+
+
 @app.post("/session/{key}/mine")
 def add_mine(key: str, payload: MinePayload, vault_path: Path = Depends(get_vault_path)):
     """A note of your own: typed, pasted or spoken. It goes into the note at
@@ -416,6 +433,7 @@ def add_mine(key: str, payload: MinePayload, vault_path: Path = Depends(get_vaul
         raw = _decode(payload.audio, MAX_MINE_AUDIO_BYTES, "recording")
         mime = payload.audio_mime.lower()
         ext = "ogg" if "ogg" in mime else "m4a" if ("mp4" in mime or "m4a" in mime) else "webm"
+        raw = _with_length(raw, ext)
         audio = (raw, ext)
         title = session.meta.get("lecture_title") or ""
         try:

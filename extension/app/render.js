@@ -92,7 +92,7 @@ export function renderMarkdown(markdown, { folder = '' } = {}) {
     const e = embeds[Number(i)];
     const full = folder ? `${folder}/${e.path}` : e.path;
     if (AUDIO.test(e.path)) {
-      return `<figure class="embed audio"><audio controls preload="none" data-vault-path="${escapeHtml(full)}"></audio></figure>`;
+      return `<figure class="embed audio"><audio controls preload="metadata" data-vault-path="${escapeHtml(full)}"></audio></figure>`;
     }
     return `<figure class="embed"><img data-vault-path="${escapeHtml(full)}" alt=""`
       + `${e.width ? ` style="max-width:${Math.min(e.width, 2000)}px"` : ''}></figure>`;
