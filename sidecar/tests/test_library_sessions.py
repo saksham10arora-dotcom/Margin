@@ -398,6 +398,77 @@ def test_a_page_nudged_while_writing_is_still_the_same_page(tmp_path):
     assert s.frame_bytes(s.frames[0]["id"]) == _paper(PAGE[:4], shift=(40, 24))
 
 
+def _filmed(lines, hand=None, exposure=0, seed=0) -> bytes:
+    """A notebook filmed by a hand-held camera: ruled paper whose faint printed
+    lines come and go with the exposure, uneven light, a desk at the edges,
+    sensor noise, dark pen writing, and the writer's hand."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:720, 0:1280]
+    paper = 205 + 25 * (x / 1280) - 15 * (y / 720) + exposure
+    img = np.stack([paper, paper, paper + 6], axis=2)
+    img[:, :140] = img[:, 1140:] = (96, 62, 46)  # the desk either side
+    for row in range(60, 720, 34):
+        # The ruling: faint blue, at the edge of what counts as a mark, so it
+        # shows in patches, different patches in every capture.
+        for x0 in range(140, 1140, 60):
+            if rng.random() < 0.5:
+                img[row:row + 4, x0:x0 + 60] -= (70 + exposure, 60 + exposure, 12)
+    img += rng.normal(0, 7, img.shape)
+    im = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    for i, line in enumerate(lines):
+        d.text((190, 52 + i * 68), line, fill=(25, 35, 90), font=_font(40))
+    if hand is not None:
+        hx, hy = hand
+        d.ellipse([hx - 130, hy - 100, hx + 130, hy + 420], fill=SKIN)
+        d.line([hx - 30, hy - 90, hx - 110, hy - 220], fill=(30, 60, 160), width=12)
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+NOTEBOOK = ["Compiler: translates source to target code", "Phases: lexical, syntax, semantic analysis",
+            "Intermediate code, code optimisation", "Code generation and the symbol table",
+            "Lexical analysis: characters to tokens", "Syntax analysis: tokens to a parse tree"]
+
+
+def test_a_filmed_notebook_page_is_one_capture_however_the_light_and_hand_change(tmp_path):
+    # A real 41 minute notebook lecture kept a capture every few seconds of one
+    # page: its faint printed ruling came and went with the camera's exposure,
+    # and the sharp second look took each lost bit of ruling for a lost word.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _filmed(NOTEBOOK, hand=(700, 420), exposure=0, seed=1))
+    s.add_frame(14, _filmed(NOTEBOOK, hand=(420, 470), exposure=-12, seed=2))
+    s.add_frame(19, _filmed(NOTEBOOK, hand=(960, 520), exposure=10, seed=3))
+    s.add_frame(25, _filmed(NOTEBOOK, exposure=-6, seed=4))
+    assert len(s.frames) == 1
+
+
+def test_two_filmed_notebook_pages_stay_two(tmp_path):
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _filmed(NOTEBOOK, hand=(700, 420), seed=1))
+    s.add_frame(40, _filmed(["Regular expressions and finite automata", "NFA to DFA by subset construction",
+                             "Minimising a DFA", "Lex: a lexical analyser generator",
+                             "Context free grammars, derivations", "Ambiguity and left recursion"],
+                            hand=(520, 460), exposure=-8, seed=2))
+    assert len(s.frames) == 2
+
+
+def test_a_hand_that_roamed_the_whole_page_does_not_hide_every_page(tmp_path):
+    # A 41 minute notebook lecture on a hand-held camera: the hand and pen had
+    # moved over nearly every part of the page, the lecture remembered all of
+    # it as "the presenter" and left it out of every comparison, so nothing
+    # matched anything and 375 captures were kept.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _paper(PAGE[:3], hand=(700, 420)))
+    seen = np.full((90, 160), 40, np.uint8)
+    seen[:12, :40] = 0  # 97% of the frame, seen moving over and over
+    np.save(s.root / "frames" / "presenter.npy", seen)
+    s.add_frame(20, _paper(PAGE[:3], hand=(420, 430)))  # the same page, the hand elsewhere
+    s.add_frame(40, _paper(["Properties of an algorithm", "input and output", "definiteness"], hand=(520, 460)))
+    assert [f["t"] for f in s.frames] == [10, 40]
+
+
 def test_two_pages_written_by_hand_stay_two(tmp_path):
     s = open_session(UDEMY, root=tmp_path)
     s.add_frame(10, _paper(PAGE[:3], hand=(700, 420)))
@@ -501,6 +572,26 @@ def _board(lines, person=None, marks=0, picture=False) -> bytes:
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=88)
     return buf.getvalue()
+
+
+def _filmed_board(lines, person=None, seed=0) -> bytes:
+    """The smart board as a classroom camera films it: grain and uneven light."""
+    rng = np.random.default_rng(seed)
+    img = np.asarray(Image.open(io.BytesIO(_board(lines, person=person))), dtype=np.float32)
+    img += np.linspace(-12, 12, 1280)[None, :, None] + rng.normal(0, 6, img.shape)
+    buf = io.BytesIO()
+    Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)).save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def test_two_filmed_slides_with_the_teacher_in_front_stay_two(tmp_path):
+    # Judging filmed paper by its dark writing merged "Need for Analysis" into
+    # "Types of Analysis" in a classroom recording: what differed between the
+    # slides had been left out as someone standing in front.
+    s = open_session(UDEMY, root=tmp_path)
+    s.add_frame(10, _filmed_board(["Need for Analysis", "We do analysis of algorithms", "to compare them"], person=1000, seed=1))
+    s.add_frame(60, _filmed_board(["Types of Analysis", "Experimental or relative", "Apriori or absolute"], person=760, seed=2))
+    assert len(s.frames) == 2
 
 
 def test_a_teacher_walking_in_front_of_a_slide_is_still_one_slide(tmp_path):

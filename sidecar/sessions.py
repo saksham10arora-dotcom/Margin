@@ -106,6 +106,18 @@ IN_FRONT_MAX = 0.5          # beyond this it is not someone in front of the slid
 MORE_PICTURE = 0.01         # share of the frame of new solid content (a picture appearing) that makes a capture fuller
 MIN_STROKES = 0.006         # less text or writing than this and a capture is compared by its picture
 REGION_SLACK = 2            # pixels either way a region may move: a page bending, not a new word
+# Paper filmed by a camera (a notebook, a board): uneven light, a desk at the
+# edges, and ruled lines printed so faintly that they show in patches,
+# different patches in every capture. The sharp look took each lost patch of
+# ruling for a lost word, and a 41 minute notebook lecture kept a capture
+# every few seconds of the same page. Pen ink is dark and the ruling is not,
+# so a filmed page is judged by its dark writing.
+FILMED_FLAT = 0.6           # a capture with less of its picture at the background colour may be filmed
+FILMED_SMOOTH = 0.8         # and with fewer neighbouring pixels alike than this (a camera's grain) it is
+DARK_INK = 70               # grey levels from the paper that pen ink reaches and printed ruling does not
+PAPER_KEEP = 0.7            # share of a filmed page's dark writing still there for it to be the same page
+PAPER_MIN_DARK = 150        # fewer dark marks (FINE_SIZE pixels) than this is too little to judge a page by
+PAPER_MAX_HAND = 0.7        # with more of the frame under the writer's hands than this, too little page is left to judge
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -463,6 +475,62 @@ def _word_sized(lost: np.ndarray) -> bool:
     return any(lost[y0:y1, x0:x1].sum() >= LOST_WORD for y0, y1, x0, x1 in _blobs(_grow(lost, 1)))
 
 
+def _background(image: np.ndarray) -> np.ndarray:
+    bins = (image // 32).reshape(-1, 3)
+    top = int(np.argmax(np.bincount(bins[:, 0] * 64 + bins[:, 1] * 8 + bins[:, 2], minlength=512)))
+    return np.array([(top // 64) * 32 + 16, ((top // 8) % 8) * 32 + 16, (top % 8) * 32 + 16])
+
+
+def _filmed(image: np.ndarray) -> bool:
+    """Paper or a board in front of a camera, not a digital slide: little of
+    it is the background colour (light falls unevenly, a desk shows), and
+    even its plain parts have a camera's grain. Measured on real lectures:
+    notebook and classroom ones 26 to 42 percent background and at most 74
+    percent of neighbouring pixels alike; digital slides 81 to 91 percent
+    background, and a slide half covered by an illustration 89 percent alike."""
+    pixels = image.reshape(-1, 3)
+    near = pixels[np.abs(pixels - _background(image)).max(axis=1) <= 16]
+    if len(near) and float((np.abs(pixels - near.mean(axis=0)).max(axis=1) <= 10).mean()) >= FILMED_FLAT:
+        return False
+    alike = np.abs(np.diff(image.mean(axis=2), axis=1)) < 0.5
+    return float(alike.mean()) < FILMED_SMOOTH
+
+
+def _hands(fine: np.ndarray) -> np.ndarray | None:
+    """The writer's hand in a FINE_SIZE picture, at thumbnail size."""
+    return hand_area(grey_thumb(Image.fromarray(np.clip(fine, 0, 255).astype(np.uint8))))
+
+
+def _same_paper(bigger: np.ndarray, smaller: np.ndarray, match: tuple) -> bool:
+    """For a writer's page in front of a camera: is most of the dark writing
+    on `smaller` still on `bigger`? Its faint printed ruling is left out, and
+    a few words more or less (being written, or under the pen) do not make
+    another page: another page has other writing everywhere.
+
+    Only the writer's hands are left out, not everything `match` left out as
+    standing in front: in a classroom recording that is whatever differs
+    between two slides, and "Need for Analysis" passed for "Types of Analysis"."""
+    dy, dx, _ = match
+    if not (_filmed(smaller) or _filmed(bigger)):
+        return False  # a digital slide: a title that changed must count
+    hand_b = _hands(bigger)
+    if hand_b is not None and (dy or dx):
+        hand_b = _shifted(hand_b, dy, dx, False)
+    hands = _either(_hands(smaller), hand_b)
+    if hands is None or hands.mean() > PAPER_MAX_HAND:
+        return False  # no writer's hand, or the page mostly under it
+    marks = strokes(smaller) & (np.abs(smaller - _background(smaller)).max(axis=2) >= DARK_INK)
+    marks &= ~(np.asarray(Image.fromarray(hands.astype(np.uint8) * 255).resize(FINE_SIZE, Image.NEAREST)) > 127)
+    total = int(marks.sum())
+    if total < PAPER_MIN_DARK:
+        return False
+    scale = FINE_SIZE[0] // THUMB_SIZE[0]
+    there = ink_mask(bigger)
+    if dy or dx:
+        there = _shifted(there, dy * scale, dx * scale, False)
+    return int(_missing_by_region(marks, there).sum()) <= (1 - PAPER_KEEP) * total
+
+
 def _sharp(bigger: np.ndarray, smaller: np.ndarray, match: tuple) -> bool:
     """`covers`, looked at again at FINE_SIZE, where letters are letters: is
     there ink of `bigger` under every stroke of `smaller` (each against its own
@@ -484,7 +552,9 @@ def _sharp(bigger: np.ndarray, smaller: np.ndarray, match: tuple) -> bool:
         there = _shifted(there, dy * scale, dx * scale, False)
     missing = _missing_by_region(marks, there)
     lost = int(missing.sum())
-    return lost <= (1 - KEEP_TO_CONTAIN) * total and lost <= LOST_OF_IMAGE * marks.size and not _word_sized(missing)
+    if lost <= (1 - KEEP_TO_CONTAIN) * total and lost <= LOST_OF_IMAGE * marks.size and not _word_sized(missing):
+        return True
+    return _same_paper(bigger, smaller, match)
 
 
 def unpack_moving(packed: str | None) -> np.ndarray | None:
@@ -770,6 +840,12 @@ class Session:
             seen = area.astype(np.uint8) if seen is None else np.minimum(seen.astype(np.int32) + area, 255).astype(np.uint8)
             np.save(path, seen)
         known = None if seen is None else seen >= 2
+        if known is not None and known.mean() > PRESENTER_MAX:
+            # Remembered over more of the frame than any presenter takes up: a
+            # writer's hand that has been all over the page, or a camera that
+            # moves. Left out, it left nothing to compare, and a 41 minute
+            # notebook lecture kept all 375 of its captures.
+            known = None
         if area is not None:
             known = area if known is None else known | area
         return known if known is not None and known.any() else None

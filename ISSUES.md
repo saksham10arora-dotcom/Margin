@@ -47,7 +47,22 @@ Written down so they are not rediscovered the hard way.
   is writing is never lost. Ids are the moment a note was made, so two pages that share
   a note file (one title, one site) never mix theirs up.
 
+## Filmed notebooks (2.11.1)
+- A 41 minute notebook lecture on a hand-held camera kept 375 slides. Two causes, both
+  measured on it: the lecture's memory of where the presenter moves had grown over
+  89% of the frame (a writer's hand roams the whole page), leaving nothing to compare;
+  and the sharp second look took the notebook's faint printed ruling, which shows in
+  different patches in every capture, for lost words. Now a remembered presenter area
+  larger than any presenter is not used, and a capture that is filmed (little of it at
+  the background colour, and a camera's grain) with a writer's hand in it is judged by
+  its dark pen writing: the same page if 70% of it is still there. Digital slides keep
+  the strict look, so a changed title is still a new slide. Folded again with these
+  rules: 375 to 36, 136 to 61, 79 to 12, 41 to 26, 28 to 14 on real notebook lectures;
+  a classroom recording 102 to 84; a digital-slide lecture 27 to 26, every slide kept.
+
 ## Known gaps
+- **A camera that zooms or swings a lot** still keeps a second picture of a page now
+  and then (about one extra per page in the lectures above).
 - **PDFs open in Chrome's own viewer** cannot have Margin on them (Chrome lets no
   extension into that viewer). A notes site that shows PDFs in its own page works.
 - **Voice notes are written down in English** (Whisper's base.en model). Hinglish is
