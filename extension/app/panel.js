@@ -103,7 +103,7 @@ export class Panel {
           <button class="tab" role="tab" data-view="live" aria-selected="true">Live<span class="count" id="count-live"></span></button>
           <button class="tab" role="tab" data-view="note" aria-selected="false">Notes</button>
           <button class="tab" role="tab" data-view="mine" aria-selected="false">Mine<span class="count" id="count-mine"></span></button>
-          <button class="tab" role="tab" data-view="crux" aria-selected="false">Crux</button>
+          <button class="tab" role="tab" data-view="crux" aria-selected="false">Cheatsheet</button>
           <button class="tab" role="tab" data-view="quiz" aria-selected="false">Quiz</button>
           <button class="tab" role="tab" data-view="code" aria-selected="false">Code</button>
           <button class="tab" role="tab" data-view="course" aria-selected="false">Course</button>
@@ -467,36 +467,34 @@ export class Panel {
     });
   }
 
-  // --- the crux, and asking the lecture ------------------------------------------------
+  // --- the cheatsheet (the crux before 2.12), and asking the lecture ---------------------
 
   /**
    * state: 'later' (no notes yet), 'missing' (a note from before there was a
-   * crux), 'making', or 'ready' with the crux markdown.
+   * cheatsheet), 'making', or 'ready' with the cheatsheet markdown.
    */
   showCrux({ state, crux = '', engine = '' }) {
     const area = this.$('crux-area');
     if (state === 'later') {
-      area.innerHTML = `<div class="empty"><strong>The crux comes with the notes.</strong>`
-        + `When the lecture's notes are written, this is the 20% of it that gives 80% of the understanding: `
-        + `the one idea, the few that matter most, and what to remember.</div>`;
+      area.innerHTML = `<div class="empty"><strong>The cheatsheet comes with the notes.</strong>`
+        + `When the lecture's notes are written, this is all of it as exam notes: every topic with its time, `
+        + `one-line definitions, every formula and every command.</div>`;
       return;
     }
     if (state === 'missing' || state === 'making') {
       const making = state === 'making';
-      area.innerHTML = `<div class="crux-intro"><strong>The 80/20 of this lecture</strong>`
-        + `<span>This note was written before Margin made a crux. It takes one short read of the note.</span>`
-        + `<button class="primary" data-study="make-crux" ${making ? 'disabled' : ''}>${making ? 'Finding the crux…' : 'Make the crux'}</button></div>`;
+      area.innerHTML = `<div class="crux-intro"><strong>Cheatsheet</strong>`
+        + `<span>This note was written before Margin made cheatsheets. It takes one read of the note.</span>`
+        + `<button class="primary" data-study="make-crux" ${making ? 'disabled' : ''}>${making ? 'Writing the cheatsheet…' : 'Make the cheatsheet'}</button></div>`;
       return;
     }
-    area.innerHTML = `<p class="crux-label">The 80/20 of this lecture</p><article class="note crux">${renderMarkdown(crux)}</article>`
+    area.innerHTML = `<p class="crux-label">The whole lecture, as exam notes</p><article class="note sheet">${renderMarkdown(crux)}</article>`
       + (engine ? `<p class="note-meta">${escapeHtml(engine)}</p>` : '');
-    const article = area.querySelector('.crux');
-    // The lead sentence, the line to remember and the last line each get their own look.
-    article.querySelector(':scope > p')?.classList.add('lead');
+    const article = area.querySelector('.sheet');
+    // A topic line (**[04:12] Topic**) and the closing formula or command sheet head their part.
     for (const p of article.querySelectorAll(':scope > p')) {
-      const start = p.textContent.trim();
-      if (start.startsWith('Remember:')) p.classList.add('remember');
-      if (start.startsWith('If you forget everything else:')) p.classList.add('last');
+      const strong = p.querySelector(':scope > strong:only-child');
+      if (strong && p.textContent.trim() === strong.textContent.trim()) p.classList.add('topic');
     }
     this.math(article);
   }

@@ -1,8 +1,8 @@
-"""Study tools on top of a written note: the crux, answers from the lecture,
-and flashcards.
+"""Study tools on top of a written note: the cheatsheet (once the crux, and
+still called that in the code), answers from the lecture, and flashcards.
 
 A note is for understanding a lecture once. These are for the weeks after:
-the crux is the 20% worth rereading, a question is answered from what was
+the cheatsheet is the whole lecture as exam notes, timestamped, a question is answered from what was
 actually said (with the moment to jump back to), and the flashcards are
 quizzed in the panel before they ever need Anki.
 """
@@ -15,9 +15,11 @@ from sidecar import llm
 from sidecar.anki_export import build_flashcard_prompt, cards_to_tsv, parse_flashcards, strip_note_chrome
 from sidecar.sessions import Session
 
-CRUX_TITLE = "The crux (80/20)"
-# Our callout, and the blank line after it, so a new crux replaces an old one.
-_CRUX_CALLOUT = re.compile(r"^> \[!tldr\]-? The crux[^\n]*\n(?:>[^\n]*\n)*\n?", re.MULTILINE)
+CRUX_TITLE = "Cheatsheet"
+# Our callout, and the blank line after it, so a new cheatsheet replaces an old
+# one, or the crux an older note still has.
+_CRUX_CALLOUT = re.compile(r"^> \[!tldr\]-? (?:The crux|Cheatsheet)[^\n]*\n(?:>[^\n]*\n)*\n?", re.MULTILINE)
+_SHEET_CALLOUT = re.compile(r"^> \[!tldr\]-? Cheatsheet[^\n]*\n(?:>[^\n]*\n)*\n?", re.MULTILINE)
 _BREATH = re.compile(r"^> \[!abstract\][^\n]*\n(?:>[^\n]*\n)*", re.MULTILINE)
 MAX_ASK_TRANSCRIPT = 100_000
 
@@ -45,8 +47,8 @@ def with_crux(note: str, crux: str) -> str:
 
 
 def crux_in_note(note: str) -> str | None:
-    """The crux written into a note, if it has one."""
-    m = _CRUX_CALLOUT.search(note)
+    """The cheatsheet written into a note, if it has one (an old crux is not one)."""
+    m = _SHEET_CALLOUT.search(note)
     if not m:
         return None
     lines = m.group(0).splitlines()[1:]
@@ -54,15 +56,15 @@ def crux_in_note(note: str) -> str | None:
 
 
 def make_crux(note: str, title: str) -> tuple[str, str]:
-    """A crux from a note: one written before notes had one, or one an update
-    gave new topics. Returns (crux, engine)."""
-    prompt = (f'You are Margin. Below is a study note for the lecture "{title}". Write its crux.\n\n'
-              f"{C.CRUX_RULES}\nWrite only the crux: no preamble, no heading, no closing remark. "
+    """A cheatsheet from a note: one written before notes had one, or one an
+    update gave new topics. Returns (cheatsheet, engine)."""
+    prompt = (f'You are Margin. Below is a study note for the lecture "{title}". Write its cheatsheet.\n\n'
+              f"{C.CRUX_RULES}\nWrite only the cheatsheet: no preamble, no heading, no closing remark. "
               f"Never use em dashes.\n\n<<<NOTE\n{strip_note_chrome(note)}\nNOTE>>>")
-    raw, engine = llm.generate(prompt, max_tokens=3000, temperature=0.3)
+    raw, engine = llm.generate(prompt, max_tokens=12000, temperature=0.2)
     crux = C.parse_crux(f"<<<CRUX>>>\n{raw}\n<<<END>>>")
     if not crux:
-        raise llm.EngineError("The model returned no crux.")
+        raise llm.EngineError("The model returned no cheatsheet.")
     return crux, engine
 
 

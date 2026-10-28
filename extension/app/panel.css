@@ -688,7 +688,17 @@ details.callout .callout-body { padding: 0 12px 10px 27px; color: var(--ink-2); 
 .setup .primary { flex: none; height: 34px; margin-top: 4px; }
 .menu .menu-model b { font-weight: 600; color: var(--ink); }
 
-/* --- crux: the 80/20 of the lecture ------------------------------------------ */
+/* --- the cheatsheet: the whole lecture as exam notes ------------------------- */
+
+.sheet > p.topic { margin: 16px 0 6px; font-size: 13.5px; color: var(--ink); }
+.sheet > p.topic:first-child { margin-top: 0; }
+.sheet > p.topic a { font: 600 11.5px var(--mono, ui-monospace, monospace); margin-right: 4px; }
+.sheet ul { margin: 0 0 4px; padding-left: 16px; }
+.sheet li { margin: 2px 0; line-height: 1.5; color: var(--ink-2); }
+.sheet li strong { color: var(--ink); }
+.sheet code { font-size: 12px; }
+
+/* --- crux: the 80/20 of the lecture (notes from before 2.12) ------------------- */
 
 .crux-label {
   margin: 0 0 10px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;

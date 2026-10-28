@@ -787,12 +787,12 @@ class MarginApp {
     this.note = note.data;
     await this.panel.showNote(note.data);
     await this.loadCode();
-    // A new note brings a new crux, and may leave the flashcards behind it.
+    // A new note brings a new cheatsheet, and may leave the flashcards behind it.
     if (this.panel.view === 'crux') this.loadCrux();
     if (this.panel.view === 'quiz') { this.cardsFor = null; this.loadCards(); }
   }
 
-  // --- study: the crux, asking the lecture, the quiz ------------------------------------
+  // --- study: the cheatsheet (once the crux), asking the lecture, the quiz ------------------------------------
 
   async loadCrux() {
     this.panel.setAskable(Boolean(this.session));
@@ -810,11 +810,11 @@ class MarginApp {
     const res = await this.api('POST', `/session/${this.session}/crux`);
     if (!res.ok) {
       this.panel.showCrux({ state: 'missing' });
-      this.panel.toast(`No crux yet: ${res.data?.detail || 'is the sidecar running?'}`, 7000);
+      this.panel.toast(`No cheatsheet yet: ${res.data?.detail || 'is the sidecar running?'}`, 7000);
       return;
     }
     this.panel.showCrux({ state: 'ready', crux: res.data.crux, engine: this.madeBy(res.data.engine) });
-    const note = await this.api('GET', `/session/${this.session}/note`); // it has the crux in it now
+    const note = await this.api('GET', `/session/${this.session}/note`); // it has the cheatsheet in it now
     if (note.ok) { this.note = note.data; await this.panel.showNote(note.data); }
   }
 

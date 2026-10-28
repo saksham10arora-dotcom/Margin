@@ -1,4 +1,4 @@
-"""The study tools: the crux, asking the lecture, and flashcards to quiz."""
+"""The study tools: the cheatsheet (once the crux), asking the lecture, and flashcards to quiz."""
 from sidecar import compose as C
 from sidecar import llm, study
 from sidecar.tests.test_pipeline_api import CANNED, META, _jpeg, _wait_done, client  # noqa: F401 (fixture)
@@ -33,13 +33,23 @@ def test_the_crux_sits_folded_under_in_one_breath_and_replaces_an_old_one():
     note = "---\ntitle: x\n---\n# 28 · X\n\n> [!abstract] In one breath\n> It is short.\n\n## The idea\nBody.\n"
     once = study.with_crux(note, "Old crux.")
     twice = study.with_crux(once, "The one idea.\n1. **First**: why.")
-    assert twice.count("[!tldr]- The crux (80/20)") == 1
+    assert twice.count("[!tldr]- Cheatsheet") == 1
     assert "Old crux" not in twice
-    breath, crux, idea = twice.index("In one breath"), twice.index("The crux"), twice.index("## The idea")
+    breath, crux, idea = twice.index("In one breath"), twice.index("Cheatsheet"), twice.index("## The idea")
     assert breath < crux < idea
     assert "\n> 1. **First**: why.\n\n## The idea" in twice  # its own callout, not merged into the next
     assert study.crux_in_note(twice) == "The one idea.\n1. **First**: why."
     assert study.crux_in_note(note) is None
+
+
+def test_an_old_crux_is_replaced_by_the_cheatsheet_and_offered_as_missing(client):
+    # A note from before 2.12 has "The crux (80/20)": it is not a cheatsheet, so the
+    # panel offers to make one, and making it takes the crux's place in the note.
+    note = "# X\n\n> [!abstract] In one breath\n> Short.\n\n> [!tldr]- The crux (80/20)\n> Old idea.\n\n## The idea\nBody.\n"
+    assert study.crux_in_note(note) is None
+    new = study.with_crux(note, "**[00:10] Topic**\n- **Term**: what it is")
+    assert "The crux" not in new and new.count("[!tldr]- Cheatsheet") == 1
+    assert study.crux_in_note(new) == "**[00:10] Topic**\n- **Term**: what it is"
 
 
 def test_a_new_note_gets_its_crux_in_the_vault_and_the_panel(client, monkeypatch):
@@ -51,7 +61,7 @@ def test_a_new_note_gets_its_crux_in_the_vault_and_the_panel(client, monkeypatch
     api.post(f"/session/{key}/compose")
     assert _wait_done(api, key)["state"] == "done"
     note = api.get(f"/session/{key}/note").json()["content"]
-    assert "> [!tldr]- The crux (80/20)" in note and "> **If you forget everything else:**" in note
+    assert "> [!tldr]- Cheatsheet" in note and "> **If you forget everything else:**" in note
     assert api.get(f"/session/{key}/crux").json()["crux"] == CRUX
 
 
@@ -66,15 +76,15 @@ def test_an_older_note_gets_a_crux_on_request_but_your_edits_are_never_touched(c
     made = api.post(f"/session/{key}/crux").json()
     assert made["crux"] == CRUX and made["engine"] == "fake-model"
     note_file = vault / api.get(f"/session/{key}/note").json()["filename"]
-    assert "The crux (80/20)" in note_file.read_text()
+    assert "[!tldr]- Cheatsheet" in note_file.read_text()
 
     # Edited by you in Obsidian: the crux is made, shown, and not written in.
-    edited = note_file.read_text().replace("> [!tldr]- The crux (80/20)", "> [!note] My own summary")
+    edited = note_file.read_text().replace("> [!tldr]- Cheatsheet", "> [!note] My own summary")
     note_file.write_text(edited.replace("blended smoothie", "blended smoothie, as I see it"))
     session_crux = vault.parent / "sessions" / key / "crux.json"
     session_crux.unlink()
     assert api.post(f"/session/{key}/crux").json()["crux"] == CRUX
-    assert "The crux (80/20)" not in note_file.read_text()
+    assert "Cheatsheet" not in note_file.read_text()
 
 
 def test_asking_the_lecture_answers_with_moments_to_jump_to(client, monkeypatch):

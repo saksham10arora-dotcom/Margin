@@ -13,7 +13,7 @@ The browser captures, this process thinks and writes. Routes:
   POST /session/{key}/compose          write the note + notebook section (async)
   GET  /session/{key}/note             the composed note, for the panel
   GET  /session/{key}/code             this lecture's notebook cells + outputs
-  GET  /session/{key}/crux             the 80/20 of the lecture (POST: make it for an older note)
+  GET  /session/{key}/crux             the cheatsheet (POST: make it for an older note)
   POST /session/{key}/ask              a question, answered from the lecture with its moments
   GET  /session/{key}/cards            flashcards to quiz in the panel (POST: make them)
   GET  /course/{course_id}             every captured lecture in a course
@@ -107,7 +107,7 @@ async def lifespan(_app):
     pipeline.start_upgrader(get_vault_path())
     yield
 
-VERSION = "2.11.3"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux; 2.11: your own notes (Mine tab, voice, pictures, pages you read); 2.11.1: filmed notebooks fold; 2.11.2: a voice note shows its length; 2.11.3: says when it cannot hear (player muted) or see (hidden tab)
+VERSION = "2.12.0"  # 2.6: course repo code; 2.7: any provider (engines.toml); 2.8: model menu (/providers); 2.8.1: presenter area; 2.8.2: installer keeps your notes folder; 2.8.3: Apache-2.0; 2.8.4: second look before dropping a slide; 2.9: crux, ask, quiz; 2.9.1: re-install restarts it; 2.9.2: slides fade in once; 2.9.3: launcher kept across updates; 2.9.4: launcher checks the port, not /health; 2.10: DeepLearning.AI; 2.10.1: handwritten lectures fold, a title change is a new slide, late sound is waited for; 2.10.2: a teacher in front of the slide; 2.10.3: a long lecture keeps what you watched; 2.10.4: closing the tab updates the note; 2.10.5: updates add to the note; 2.10.6: the audit (long lectures, deletions, stuck models, Antigravity, self-update); 2.10.7: adding to a topic never loses a slide; 2.10.8: a new topic refreshes the crux; 2.11: your own notes (Mine tab, voice, pictures, pages you read); 2.11.1: filmed notebooks fold; 2.11.2: a voice note shows its length; 2.11.3: says when it cannot hear (player muted) or see (hidden tab); 2.12: the cheatsheet replaces the crux
 
 app = FastAPI(title="Margin", version=VERSION, lifespan=lifespan)
 app.add_middleware(
@@ -490,18 +490,18 @@ def _note_or_404(session, vault_path: Path) -> tuple[Path, str]:
 def get_crux(key: str, vault_path: Path = Depends(get_vault_path)):
     session = _session_or_404(key)
     made = session.study("crux")
-    if made:
+    if made and made.get("kind") == "cheatsheet":  # a crux from before 2.12 is not one: offer to make it
         return made
     path = library.lecture_note_path(vault_path, session.meta)
     crux = study.crux_in_note(path.read_text()) if path.exists() else None
     if not crux:
-        raise HTTPException(status_code=404, detail="No crux yet")
+        raise HTTPException(status_code=404, detail="No cheatsheet yet")
     return {"crux": crux}
 
 
 @app.post("/session/{key}/crux")
 def make_crux(key: str, vault_path: Path = Depends(get_vault_path)):
-    """The crux for a note written before notes had one. Added to the note too,
+    """The cheatsheet for a note written before notes had one. Added to the note too,
     unless you have edited it: then it stays here, in the panel."""
     session = _session_or_404(key)
     path, note = _note_or_404(session, vault_path)
@@ -517,7 +517,7 @@ def make_crux(key: str, vault_path: Path = Depends(get_vault_path)):
             updated = study.with_crux(note, crux)
             path.write_text(updated)
             session.record_written(pipeline._digest(updated))
-    session.save_study("crux", {"crux": crux, "engine": engine})
+    session.save_study("crux", {"crux": crux, "engine": engine, "kind": "cheatsheet"})
     return session.study("crux")
 
 

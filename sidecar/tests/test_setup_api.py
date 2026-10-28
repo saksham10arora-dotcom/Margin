@@ -106,8 +106,10 @@ def usage(tmp_path, monkeypatch):
 
 def test_chatgpt_through_codex_gets_the_prompt_and_the_slides(tmp_path, monkeypatch, usage):
     # Codex writes its last message to the file after -o; the images come with -i.
-    exe = _tool(tmp_path, "codex", 'args="$*"; out=""; prev=""\nfor a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
-                'echo "note with $(echo "$args" | grep -o -- "-i" | wc -l | tr -d " ") images" > "$out"\n')
+    # Counts -i arguments exactly: grep on the whole line also counted a "-i"
+    # inside a random temp path, which failed CI now and then.
+    exe = _tool(tmp_path, "codex", 'out=""; prev=""; n=0\nfor a in "$@"; do [ "$prev" = "-o" ] && out="$a"; [ "$a" = "-i" ] && n=$((n+1)); prev="$a"; done\n'
+                'echo "note with $n images" > "$out"\n')
     monkeypatch.setattr(subscriptions, "find", lambda b: exe)
     text = subscriptions.run("codex", "write the note", [Picture("S001 at 00:10", b"jpg"), Picture("S002", b"jpg")])
     assert text.strip() == "note with 2 images"

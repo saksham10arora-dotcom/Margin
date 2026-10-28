@@ -36,19 +36,26 @@ from sidecar.sessions import Session, format_ts
 MAX_SLIDES = 24
 MAX_TRANSCRIPT_CHARS = 120_000  # ~2h of speech; longer: what you watched whole, the rest thinned
 
-# The crux of a lecture, the 80/20 of it: asked for with the note (a CRUX
-# block), and on its own for a note written before there was one (study.py).
-CRUX_RULES = """The crux: the 20% of this lecture that gives 80% of the understanding, for someone revising it
-in two minutes a week from now. Markdown with no heading, roughly 120 to 300 words, scaled to how
-much the lecture covers:
-- First, one sentence that states the one idea this lecture exists to teach. State the idea
-  itself: never begin with "The single idea", "The main idea" or "This lecture".
-- Then the ideas that matter most as a numbered list, three to six (fewer for a short or light
-  lecture): each a **bold phrase** and one or two sentences on why it matters or how it works.
-- Only if the lecture has them, a line starting `**Remember:**` with the formula, definition or
-  command worth memorising (formulas in KaTeX).
-- Last, one line starting `**If you forget everything else:**`.
-No examples, history or asides, and nothing the note does not say. Same rules as the note.
+# The cheatsheet (it took the crux's place in 2.12; the code still calls it the
+# crux): asked for with the note (a CRUX block), and on its own for a note
+# written before there was one, or one an update gave new topics (study.py).
+CRUX_RULES = """The cheatsheet: exam-ready short notes for the whole lecture, what a student would copy onto one
+revision sheet the night before the exam. Markdown with no heading and no prose paragraphs.
+- Cover every topic of the lecture, in the order it is taught. Each topic is one bold line with the
+  time it starts and its name, exactly like `**[04:12] Topic**`, then short bullets under it:
+  - every definition in one line: `**Term**: what it is`;
+  - every formula, in KaTeX, with what each symbol means in a few words;
+  - every command, function, keyword or syntax the lecture shows, in backticks, with a few words on
+    what it does and its key options (`ls -la`: list all files, hidden too, with details). A lecture
+    of commands is mostly these;
+  - key facts, rules, steps, complexities, differences and common mistakes, one line each.
+- Fragments, not sentences. No analogies, no examples with their own numbers, no history, no asides,
+  nothing the lecture does not say.
+- When the lecture has three or more formulas or commands, end with a bold line `**Formula sheet**`
+  (or `**Command sheet**`, or both) and every one of them again as a bullet list, a few words each
+  at most.
+Scale with the lecture: a short one is a dozen lines, a long one-shot is as long as it needs to be.
+Same rules as the note.
 """
 
 

@@ -511,7 +511,7 @@ def run(session: Session, vault: Path, quality: str = "any", choice: dict | None
     if comp.crux:
         crux = C.link_timestamps(comp.crux, meta)
         note = study.with_crux(note, crux)
-        session.save_study("crux", {"crux": crux, "engine": comp.engine})
+        session.save_study("crux", {"crux": crux, "engine": comp.engine, "kind": "cheatsheet"})
 
     note_path.parent.mkdir(parents=True, exist_ok=True)
     with _note_lock(note_path):
@@ -626,7 +626,7 @@ def _refresh_crux(session: Session, vault: Path, note_path: Path, note: str, edi
         logger.warning("crux for %s not refreshed: %s", session.key, e)
         return
     crux = C.link_timestamps(crux, session.meta)
-    session.save_study("crux", {"crux": crux, "engine": engine})
+    session.save_study("crux", {"crux": crux, "engine": engine, "kind": "cheatsheet"})
     if not edited:
         with _note_lock(note_path):
             note = _yours_kept(session, vault, note_path, study.with_crux(note, crux))
