@@ -41,6 +41,12 @@ async function handle(msg, sender) {
       await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (hash ? `#${hash}` : '') });
       return { ok: true };
     }
+    case 'mute-tab':
+      // Only this tab: Chrome's own "Mute site" would silence every YouTube tab.
+      await chrome.tabs.update(sender.tab.id, { muted: true });
+      return { ok: true };
+    case 'blind':
+      return showBlind(Boolean(msg.on));
     case 'load-mermaid':
       await chrome.scripting.executeScript({
         target: { tabId: sender.tab.id, frameIds: [sender.frameId ?? 0] },
@@ -166,6 +172,16 @@ async function captureTab(sender) {
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   }
+}
+
+// A lecture Margin can only see by reading the screen gets no slides while its
+// tab is out of view. The page itself cannot tell you then (you are looking at
+// another tab), so the toolbar button does, on every tab.
+async function showBlind(on) {
+  await chrome.action.setBadgeText({ text: on ? '!' : '' });
+  if (on) await chrome.action.setBadgeBackgroundColor({ color: '#e5566b' });
+  await chrome.action.setTitle({ title: on ? 'Margin: no slides while the lecture tab is hidden. Keep it in view.' : 'Margin' });
+  return { ok: true };
 }
 
 // Only caption files from the platforms Margin knows, not arbitrary URLs a

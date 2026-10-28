@@ -634,6 +634,19 @@ details.callout .callout-body { padding: 0 12px 10px 27px; color: var(--ink-2); 
   pointer-events: none;
 }
 .toast[data-on="true"] { opacity: 1; transform: none; }
+.toast[data-on="true"][data-action="true"] { pointer-events: auto; }
+.toast-action {
+  display: block;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--r-sm, 6px);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.toast-action:hover { opacity: 0.85; }
 
 /* --- collapsed tab --------------------------------------------------------- */
 

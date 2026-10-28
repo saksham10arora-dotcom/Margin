@@ -201,6 +201,7 @@ class MarginApp {
       return;
     }
     if (this.video && this.session) this.track();
+    if (this.capturing) this.watchBlind();
   }
 
   async switchTo(video, key) {
@@ -348,6 +349,7 @@ class MarginApp {
   startCapture() {
     if (this.capturing || !this.video || !this.session) return;
     this.capturing = true;
+    this.mutedWarned = false;
     const isBlocked = () => Boolean(this.adapter.isAd?.());
     this.sampler = new FrameSampler(this.video, {
       bridge: this.bridge,
@@ -359,6 +361,8 @@ class MarginApp {
       },
     });
     this.sampler.start();
+    this.onVisibility = () => this.watchBlind();
+    document.addEventListener('visibilitychange', this.onVisibility);
     if (this.speech === 'listen') {
       this.recorder = new AudioRecorder(this.video, {
         isBlocked,
@@ -369,12 +373,16 @@ class MarginApp {
         // The sound can arrive a moment after capture starts; until then, and
         // if it never does, the panel says what is true.
         onState: (state) => {
-          if (state === 'listening') this.panel.setSpeech('Listening · Whisper on this Mac', 'live');
+          if (state === 'listening' && silenced(this.video)) this.warnMuted();
+          else if (state === 'listening') this.panel.setSpeech('Listening · Whisper on this Mac', 'live');
           else this.panel.setSpeech('No captions · no sound from this video', 'off');
         },
       });
       try {
         this.recorder.start();
+        this.onVolume = () => this.warnMuted();
+        this.video.addEventListener('volumechange', this.onVolume);
+        if (silenced(this.video)) this.warnMuted();
       } catch (e) {
         this.recorder = null;
         this.speech = 'none';
@@ -388,12 +396,62 @@ class MarginApp {
   stopCapture() {
     if (!this.capturing) return;
     this.capturing = false;
+    this.watchBlind(true);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    if (this.onVolume) this.video?.removeEventListener('volumechange', this.onVolume);
+    this.onVolume = null;
     this.sampler?.stop();
     this.recorder?.stop();
     this.sampler = null;
     this.recorder = null;
     this.panel.setLive(this.health ? 'ok' : 'off');
     if (this.speech === 'listen') this.panel.setSpeech(`Heard · ${this.cues.length} lines`, 'ok');
+  }
+
+  // With no captions Margin listens to the video's own sound, and a player's
+  // mute (YouTube's m) or its volume at 0 silences that too, while Chrome's tab mute does not.
+  // Measured: muted in the player, 0 lines in 8 minutes; the tab muted instead,
+  // and hidden behind another tab, Whisper heard all of it.
+  warnMuted() {
+    if (!this.recorder || !this.video) return;
+    if (silenced(this.video)) {
+      this.panel.setSpeech('Muted in the player · Margin hears nothing', 'off');
+      if (!this.mutedWarned) {
+        this.mutedWarned = true;
+        this.panel.toast('This video has no captions, so Margin listens to it, and muting the player (or its volume at 0) mutes Margin too.', 20000, {
+          label: 'Mute only this tab instead',
+          run: async () => {
+            await this.bridge.send({ type: 'mute-tab' });
+            // The tab is silent now, so the video can play its sound to Margin again.
+            if (this.video) { this.video.muted = false; if (this.video.volume === 0) this.video.volume = 1; }
+          },
+        });
+      }
+    } else {
+      this.panel.setSpeech(this.cues.length ? `Listening · ${this.cues.length} lines heard` : 'Listening · Whisper on this Mac', 'live');
+    }
+  }
+
+  // Most videos Margin reads directly, hidden tab or not. A protected one it can
+  // only read off the screen, and Chrome shows it the screen of the tab you are
+  // looking at, so while that tab is hidden no slides are kept. The toolbar
+  // button says so meanwhile, and the panel says what was missed when you return.
+  watchBlind(stopping = false) {
+    const v = this.video;
+    const blind = !stopping && this.capturing && this.sampler?.mode === 'tab'
+      && document.visibilityState !== 'visible' && v && !v.paused;
+    if (blind && this.blindFrom == null) {
+      this.blindFrom = v.currentTime;
+      this.bridge.send({ type: 'blind', on: true });
+    } else if (!blind && this.blindFrom != null) {
+      const from = this.blindFrom;
+      const to = v?.currentTime ?? from;
+      this.blindFrom = null;
+      this.bridge.send({ type: 'blind', on: false });
+      if (to - from > 5) {
+        this.panel.toast(`No slides from ${formatTs(from)} to ${formatTs(to)}: this video only lets Margin read the screen, so its tab has to stay in view. Drag it into its own window and keep that window visible.`, 12000);
+      }
+    }
   }
 
   async onKeyframe({ t, dataUrl, moving }) {
@@ -432,7 +490,8 @@ class MarginApp {
     const hi = Math.max(...fresh.map((c) => c.end));
     this.cues = this.cues.filter((c) => c.end <= lo || c.start >= hi).concat(fresh).sort((a, b) => a.start - b.start);
     this.refreshCardTexts();
-    this.panel.setSpeech(`Listening · ${this.cues.length} lines heard`, 'live');
+    if (silenced(this.video)) this.warnMuted();
+    else this.panel.setSpeech(`Listening · ${this.cues.length} lines heard`, 'live');
     this.refreshControls();
   }
 
@@ -1182,4 +1241,9 @@ function download(name, text) {
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Muted or at volume 0 in the player: either way Margin records silence (measured). */
+function silenced(video) {
+  return Boolean(video && (video.muted || video.volume === 0));
 }

@@ -292,9 +292,18 @@ export class Panel {
     this.h.onView(view);
   }
 
-  toast(message, ms = 3200) {
+  /** A short message; with an action, a button in it that does something about it. */
+  toast(message, ms = 3200, action = null) {
     const el = this.$('toast');
     el.textContent = message;
+    el.dataset.action = action ? 'true' : 'false';
+    if (action) {
+      const btn = document.createElement('button');
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', () => { el.dataset.on = 'false'; action.run(); });
+      el.append(btn);
+    }
     el.dataset.on = 'true';
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => { el.dataset.on = 'false'; }, ms);
