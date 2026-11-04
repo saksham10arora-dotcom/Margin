@@ -41,10 +41,13 @@ async function handle(msg, sender) {
       await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (hash ? `#${hash}` : '') });
       return { ok: true };
     }
-    case 'mute-tab':
+    case 'mute-tab': {
       // Only this tab: Chrome's own "Mute site" would silence every YouTube tab.
-      await chrome.tabs.update(sender.tab.id, { muted: true });
-      return { ok: true };
+      const tab = await chrome.tabs.update(sender.tab.id, { muted: msg.muted !== false });
+      return { ok: true, muted: Boolean(tab?.mutedInfo?.muted) };
+    }
+    case 'tab-muted':
+      return { ok: true, muted: Boolean(sender.tab?.mutedInfo?.muted) };
     case 'blind':
       return showBlind(Boolean(msg.on));
     case 'load-mermaid':

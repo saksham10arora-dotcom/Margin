@@ -95,7 +95,7 @@ export class Panel {
           </div>
         </header>
         <section class="signals" aria-label="What Margin is capturing">
-          <div class="signal"><div class="signal-label">Speech</div><div class="signal-value" id="sig-speech">Checking…</div></div>
+          <div class="signal"><div class="signal-label">Speech<button class="mute-chip" id="mute-tab" hidden>Mute tab</button></div><div class="signal-value" id="sig-speech">Checking…</div></div>
           <div class="signal"><div class="signal-label">Slides</div><div class="signal-value" id="sig-slides">0</div></div>
           <div class="signal"><div class="signal-label">Watched</div><div class="signal-value" id="sig-watched">0%</div><div class="meter"><i id="meter"></i></div></div>
         </section>
@@ -197,6 +197,7 @@ export class Panel {
     root.querySelectorAll('.tab').forEach((tab) =>
       tab.addEventListener('click', () => this.show(tab.dataset.view)));
     this.$('close').addEventListener('click', () => this.h.onClose());
+    this.$('mute-tab').addEventListener('click', () => this.h.onMuteTab?.());
     this.$('collapse').addEventListener('click', () => this.collapse(true));
     this.$('pill').addEventListener('click', () => this.collapse(false));
     this.$('backfill-go').addEventListener('click', () => this.h.onBackfill?.());
@@ -349,6 +350,18 @@ export class Panel {
   setSpeech(text, state = 'ok') {
     this.$('sig-speech').innerHTML = `<span class="dot" data-state="${state}"></span><span class="clip">${escapeHtml(text)}</span>`;
     this.$('sig-speech').title = text;
+  }
+
+  /** null hides the button; true/false is whether this tab is muted now. */
+  setMuteTab(muted) {
+    const btn = this.$('mute-tab');
+    btn.hidden = muted === null;
+    this.tabMuted = Boolean(muted);
+    btn.textContent = muted ? 'Unmute tab' : 'Mute tab';
+    btn.setAttribute('aria-pressed', String(Boolean(muted)));
+    btn.title = muted
+      ? 'This tab is muted. Margin still hears the lecture.'
+      : 'Mute only this tab. Margin keeps hearing the lecture; the player\'s own mute would stop it.';
   }
 
   setSlides(n) {

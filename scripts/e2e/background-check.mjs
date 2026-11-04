@@ -30,6 +30,7 @@ const url = local ? `http://localhost:${PAGE_PORT}/index.html` : arg;
 const lectureDir = local ? path.resolve(arg) : null;
 const tabMute = process.argv.includes('--tab-mute');
 const clickFix = process.argv.includes('--click-fix'); // press the warning's "Mute only this tab"
+const chip = process.argv.includes('--chip'); // press the standing "Mute tab" button by Speech, twice
 const volumeZero = process.argv.includes('--volume0'); // the volume slider at 0 instead of mute
 // The video from another origin, as a protected one is: Margin cannot read it
 // and has to read the screen, which only works while its tab is in view.
@@ -164,6 +165,20 @@ try {
     await sleep(1500);
     const tabMuted = await (await sw.worker()).evaluate(async () => (await chrome.tabs.query({ active: true }))[0].mutedInfo.muted);
     log(JSON.stringify({ pressed, tabMuted, videoMuted: await page.evaluate(() => document.querySelector('video').muted) }));
+  }
+  if (chip) {
+    await sleep(2000);
+    const tabState = async () => (await (await sw.worker()).evaluate(async () => (await chrome.tabs.query({ active: true }))[0].mutedInfo.muted));
+    const label = () => shadow("const b = r.getElementById('mute-tab'); return b && !b.hidden ? b.textContent : null");
+    const before = { label: await label(), tabMuted: await tabState() };
+    await shadow("r.getElementById('mute-tab').click(); return true;");
+    await sleep(1000);
+    const muted1 = { label: await label(), tabMuted: await tabState(), videoMuted: await page.evaluate(() => document.querySelector('video').muted) };
+    await shadow("r.getElementById('mute-tab').click(); return true;");
+    await sleep(1000);
+    const after = { label: await label(), tabMuted: await tabState() };
+    await shadow("r.getElementById('mute-tab').click(); return true;"); // leave it muted for the run
+    log(JSON.stringify({ before, muted1, after }));
   }
   for (let t = 0; t < visibleSec; t += 30) { await sleep(30000); await snap('visible'); }
 

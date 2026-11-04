@@ -115,6 +115,7 @@ class MarginApp {
       onBackfill: () => this.backfill(),
       onAsk: (q) => this.ask(q),
       onMakeCrux: () => this.makeCrux(),
+      onMuteTab: () => this.toggleTabMute(),
       onMakeCards: () => this.makeCards(),
       onExportCards: () => this.exportCards(),
       onMineStart: () => this.mineContext(),
@@ -317,6 +318,7 @@ class MarginApp {
       const res = await this.api('POST', `/session/${this.session}/captions`, { cues: caps.cues, source: caps.source });
       this.noteStale(res);
       this.speech = 'captions';
+      this.showTabMute();
       const label = SPEECH_LABEL[caps.source] || 'Captions';
       this.panel.setSpeech(`${label} · ${res.data?.cue_count ?? caps.cues.length} lines`, 'ok');
       return;
@@ -324,8 +326,10 @@ class MarginApp {
     if (this.health?.asr?.available && AudioRecorder.supported(this.video)) {
       this.speech = 'listen';
       this.panel.setSpeech('No captions · will listen', 'ok');
+      this.showTabMute();
     } else {
       this.speech = 'none';
+      this.showTabMute();
       this.panel.setSpeech(this.health?.asr?.available ? 'No captions · audio blocked' : 'No captions · slides only', 'off');
     }
   }
@@ -420,16 +424,32 @@ class MarginApp {
         this.mutedWarned = true;
         this.panel.toast('This video has no captions, so Margin listens to it, and muting the player (or its volume at 0) mutes Margin too.', 20000, {
           label: 'Mute only this tab instead',
-          run: async () => {
-            await this.bridge.send({ type: 'mute-tab' });
-            // The tab is silent now, so the video can play its sound to Margin again.
-            if (this.video) { this.video.muted = false; if (this.video.volume === 0) this.video.volume = 1; }
-          },
+          run: () => this.muteTab(true),
         });
       }
     } else {
       this.panel.setSpeech(this.cues.length ? `Listening · ${this.cues.length} lines heard` : 'Listening · Whisper on this Mac', 'live');
     }
+  }
+
+  // Every lecture gets a standing "Mute tab" button by the Speech signal, so you
+  // can watch something else while it plays for the notes. It mutes only this
+  // tab, which, unlike the player's mute, never silences what Margin listens to.
+  async showTabMute() {
+    const res = await this.bridge.send({ type: 'tab-muted' }).catch(() => null);
+    this.panel.setMuteTab(Boolean(res?.muted));
+  }
+
+  toggleTabMute() {
+    return this.muteTab(!this.panel.tabMuted);
+  }
+
+  async muteTab(muted) {
+    const res = await this.bridge.send({ type: 'mute-tab', muted }).catch(() => null);
+    if (!res?.ok) return this.panel.toast('Could not mute this tab.');
+    this.panel.setMuteTab(res.muted);
+    // The tab is silent now, so the video can play its sound to Margin again.
+    if (res.muted && this.video) { this.video.muted = false; if (this.video.volume === 0) this.video.volume = 1; }
   }
 
   // Most videos Margin reads directly, hidden tab or not. A protected one it can

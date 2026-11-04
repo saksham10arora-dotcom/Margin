@@ -139,6 +139,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-size: 11px;
   color: var(--ink-3);
 }
+.mute-chip {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 15px;
+  cursor: pointer;
+}
+.mute-chip:hover { background: var(--line); }
+.mute-chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.mute-chip[hidden] { display: none; }
 .signal-value {
   font-size: 12.5px;
   font-weight: 560;
