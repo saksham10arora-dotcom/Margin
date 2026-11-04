@@ -9,6 +9,8 @@ notebook, already run. Then it helps you keep it: the crux of the lecture (its
 80/20), flashcards to quiz yourself on, and answers to your questions from the
 lecture itself, linked to the moment it said so.
 
+[![Margin's 46 second film: click to watch](docs/film.jpg)](https://saksham.digital/margin#film)
+
 ![A lecture playing while Margin keeps its slides, then the note it wrote and the code, run](docs/demo.gif)
 
 <sub>A real run, sped up: a short lecture plays, Margin keeps each slide as it finishes building, then writes
